@@ -2,28 +2,46 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
-#include "external/render-c/src/base.h"
-#include "external/render-c/src/buffer.h"
-#include "external/render-c/src/glfw_error.h"
-#include "external/render-c/src/image.h"
-#include "external/render-c/src/pipeline.h"
-#include "external/render-c/src/rpass.h"
-#include "external/render-c/src/set.h"
-#include "external/render-c/src/shader.h"
-#include "external/render-c/src/swapchain.h"
-#include "external/render-c/src/sync.h"
+#include "external/cglm/include/cglm/cglm.h"
+
+#include "external/render-c-linked/src/base.h"
+#include "external/render-c-linked/src/buffer.h"
+#include "external/render-c-linked/src/glfw_error.h"
+#include "external/render-c-linked/src/image.h"
+#include "external/render-c-linked/src/pipeline.h"
+#include "external/render-c-linked/src/rpass.h"
+#include "external/render-c-linked/src/set.h"
+#include "external/render-c-linked/src/shader.h"
+#include "external/render-c-linked/src/swapchain.h"
+#include "external/render-c-linked/src/sync.h"
+
+#include "external/render-utils/src/camera.h"
+#include "external/render-utils/src/timer.h"
 
 #include <assert.h>
 
 const char* DEVICE_EXTS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 const int DEVICE_EXT_CT = 1;
 
+const double MOUSE_SENSITIVITY_FACTOR = 0.001;
+const float MOVEMENT_SPEED = 1.0F;
+
 #define CONCURRENT_FRAMES 4
+
+const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_SRGB;
+const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 
 struct SyncSet {
         VkFence render_fence;
         VkSemaphore acquire_sem;
         VkSemaphore render_sem;
+};
+
+struct PushConstants {
+        vec4 forward;
+        vec4 eye;
+        vec4 dir;
+        float aspect;
 };
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
@@ -43,14 +61,18 @@ int main() {
         glfwSetErrorCallback(glfw_error_callback);
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         GLFWwindow* window = glfwCreateWindow(800, 600, "Vulkan", NULL, NULL);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
 	// Base
         struct Base base;
         base_create(window, 1, 0, NULL, DEVICE_EXT_CT, DEVICE_EXTS, &base);
 
+        const VkSampleCountFlagBits sample_ct = base.max_samples > VK_SAMPLE_COUNT_4_BIT ?
+       		VK_SAMPLE_COUNT_4_BIT : base.max_samples;
+
 	// Swapchain
         struct Swapchain swapchain;
-        swapchain_create(base.surface, base.phys_dev, base.device, SWAPCHAIN_DONT_CARE, SWAPCHAIN_DONT_CARE, &swapchain);
+        swapchain_create(base.surface, base.phys_dev, base.device, SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
         // Load shaders
         VkShaderModule vs = load_shader(base.device, "shaders/shader.vs.spv");
@@ -68,30 +90,48 @@ int main() {
 
         // Render pass
 	VkRenderPass rpass;
-	rpass_basic(base.device, swapchain.format, &rpass);
+	rpass_color_multi(base.device, swapchain.format, sample_ct, &rpass);
 
         // Pipeline layout
+	VkPushConstantRange pushc_range = {0};
+        pushc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        pushc_range.offset = 0;
+        pushc_range.size = sizeof(struct PushConstants);
+
         VkPipelineLayoutCreateInfo pipeline_layout_info = {0};
         pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipeline_layout_info.pushConstantRangeCount = 1;
+        pipeline_layout_info.pPushConstantRanges = &pushc_range;
 
         VkPipelineLayout pipeline_layout;
         VkResult res = vkCreatePipelineLayout(base.device, &pipeline_layout_info, NULL, &pipeline_layout);
         assert(res == VK_SUCCESS);
 
         // Pipeline
+        struct PipelineSettings pipeline_settings = PIPELINE_SETTINGS_DEFAULT;
+        pipeline_settings.multisampling.rasterizationSamples = sample_ct;
+        pipeline_settings.multisampling.sampleShadingEnable = VK_TRUE;
+        pipeline_settings.multisampling.minSampleShading = 1.0;
+
 	VkPipeline pipeline;
-	pipeline_create(base.device, &PIPELINE_SETTINGS_DEFAULT,
+	pipeline_create(base.device, &pipeline_settings,
 	                sizeof(shaders) / sizeof(shaders[0]), shaders,
 	                pipeline_layout, rpass, 0, &pipeline);
 
         vkDestroyShaderModule(base.device, vs, NULL);
         vkDestroyShaderModule(base.device, fs, NULL);
 
+	// Color image (multisampled if supported)
+	struct Image color_multi;
+	image_create_color(base.phys_dev, base.device, swapchain.format,
+                           swapchain.width, swapchain.height, sample_ct, &color_multi);
+
         // Framebuffers
         VkFramebuffer* framebuffers = malloc(swapchain.image_ct * sizeof(framebuffers[0]));
         for (int i = 0; i < swapchain.image_ct; i++) {
+                VkImageView views[] = {color_multi.view, swapchain.views[i]};
                 framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
-                                   1, &swapchain.views[i], &framebuffers[i]);
+                                   sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
         }
 
         // Command buffers
@@ -106,9 +146,20 @@ int main() {
         VkFence* image_fences = malloc(swapchain.image_ct * sizeof(image_fences[0]));
         for (int i = 0; i < swapchain.image_ct; i++) image_fences[i] = VK_NULL_HANDLE;
 
+	// Camera
+	struct CameraFly camera;
+	camera.pitch = 0.0F;
+	camera.yaw = 0.0F;
+	camera.eye[0] = 0.0F; camera.eye[1] = 0.0F; camera.eye[2] = 0.0F; 
+	double last_mouse_x, last_mouse_y;
+	glfwGetCursorPos(window, &last_mouse_x, &last_mouse_y);
+
 	// Main loop
-        int must_recreate = 0;
         int frame_ct = 0;
+        struct timespec start_time = timer_start();
+        struct timespec last_frame_time = timer_start();
+
+        int must_recreate = 0;
         while (!glfwWindowShouldClose(window)) {
                 while (must_recreate) {
                         must_recreate = 0;
@@ -119,7 +170,7 @@ int main() {
 
                         swapchain_destroy(base.device, &swapchain);
                         swapchain_create(base.surface, base.phys_dev, base.device,
-                                         VK_FORMAT_B8G8R8A8_SRGB, VK_PRESENT_MODE_IMMEDIATE_KHR, &swapchain);
+                                         old_format, SC_PRESENT_MODE_PREF, &swapchain);
 
                         assert(swapchain.format == old_format && swapchain.image_ct == old_image_ct);
 
@@ -128,11 +179,17 @@ int main() {
                                 sync_set_create(base.device, &sync_sets[i]);
                         }
 
-                        for (int i = 0; i < swapchain.image_ct; i++) {
+                        image_destroy(base.device, &color_multi);
+                	image_create_color(base.phys_dev, base.device, swapchain.format,
+                                           swapchain.width, swapchain.height,
+                                           sample_ct, &color_multi);
+
+                         for (int i = 0; i < swapchain.image_ct; i++) {
                                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
 
+                                VkImageView views[] = {color_multi.view, swapchain.views[i]};
                                 framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
-                                                   1, &swapchain.views[i], &framebuffers[i]);
+                                                   sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
 
                                 image_fences[i] = VK_NULL_HANDLE;
                         }
@@ -142,6 +199,28 @@ int main() {
                         if (real_width != swapchain.width || real_height != swapchain.height) must_recreate = 1;
                 }
 
+                // Handle input
+                // Mouse movement
+                double new_mouse_x, new_mouse_y;
+                glfwGetCursorPos(window, &new_mouse_x, &new_mouse_y);
+                double d_mouse_x = new_mouse_x - last_mouse_x, d_mouse_y = new_mouse_y - last_mouse_y;
+                double delta = timer_get_elapsed(&last_frame_time);
+                last_frame_time = timer_start(last_frame_time);
+        	last_mouse_x = new_mouse_x; last_mouse_y = new_mouse_y;
+
+        	// Keys
+        	vec3 cam_movement = {0.0F, 0.0F, 0.0F};
+        	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) cam_movement[2] += MOVEMENT_SPEED;
+        	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) cam_movement[2] -= MOVEMENT_SPEED;
+        	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) cam_movement[0] -= MOVEMENT_SPEED;
+        	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) cam_movement[0] += MOVEMENT_SPEED;
+
+        	// Update camera
+        	camera_fly_update(&camera,
+                                  d_mouse_x * MOUSE_SENSITIVITY_FACTOR, d_mouse_y * MOUSE_SENSITIVITY_FACTOR,
+        	                  cam_movement, delta);
+
+		// Set up frame
                 int frame_idx = frame_ct % CONCURRENT_FRAMES;
                 struct SyncSet* sync_set = &sync_sets[frame_idx];
 
@@ -195,7 +274,20 @@ int main() {
                 scissor.extent.height = swapchain.height;
                 vkCmdSetScissor(cbuf, 0, 1, &scissor);
 
-                vkCmdDraw(cbuf, 3, 1, 0, 0);
+                struct PushConstants pushc_data;
+                pushc_data.forward[0] = camera.forward[0];
+                pushc_data.forward[1] = camera.forward[1];
+                pushc_data.forward[2] = camera.forward[2];
+                pushc_data.eye[0] = camera.eye[0];
+                pushc_data.eye[1] = camera.eye[1];
+                pushc_data.eye[2] = camera.eye[2];
+                pushc_data.dir[0] = camera.yaw;
+                pushc_data.dir[1] = camera.pitch;
+                pushc_data.aspect = (float) swapchain.width / (float) swapchain.height;
+
+		vkCmdPushConstants(cbuf, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+		                   0, sizeof(struct PushConstants), &pushc_data);
+                vkCmdDraw(cbuf, 6, 1, 0, 0);
 
                 vkCmdEndRenderPass(cbuf);
 
@@ -245,6 +337,10 @@ int main() {
                 glfwPollEvents();
         }
 
+	double elapsed = timer_get_elapsed(&start_time);
+        double fps = (double) frame_ct / elapsed;
+        printf("FPS: %.2f\n", fps);
+
         vkDeviceWaitIdle(base.device);
 
         vkDestroyPipeline(base.device, pipeline, NULL);
@@ -261,6 +357,8 @@ int main() {
         for (int i = 0; i < swapchain.image_ct; i++) {
                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
         }
+
+        image_destroy(base.device, &color_multi);
 
         base_destroy(&base);
 
