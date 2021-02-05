@@ -4,7 +4,8 @@ layout (push_constant, std140) uniform PushConstants {
         vec4 forward;
         vec4 eye;
         vec4 dir;
-        float aspect;
+        vec4 aspect;
+        vec4 exp;
 } constants;
 
 layout (location = 0) in vec3 dir;
@@ -21,31 +22,29 @@ float sphere_sdf(vec3 pos) {
         return dist_to_sphere_center - sphere_radius;
 }
 
-// http://blog.hvidtfeldts.net/index.php/2011/09/distance-estimated-3d-fractals-v-the-mandelbulb-different-de-approximations/
+// https://www.shadertoy.com/view/ltfSWn
 float mandel_sdf(vec3 pos) {
-        int Power = 8;
-	vec3 z = pos;
-	float dr = 1.0;
-	float r = 0.0;
-	for (int i = 0; i < 10; i++) {
-		r = length(z);
-		if (r>2.0) break;
-		
-		// convert to polar coordinates
-		float theta = acos(z.z/r);
-		float phi = atan(z.y,z.x);
-		dr =  pow( r, Power-1.0)*Power*dr + 1.0;
-		
-		// scale and rotate the point
-		float zr = pow( r,Power);
-		theta = theta*Power;
-		phi = phi*Power;
-		
-		// convert back to cartesian coordinates
-		z = zr*vec3(sin(theta)*cos(phi), sin(phi)*sin(theta), cos(theta));
-		z+=pos;
-	}
-	return 0.5*log(r)*r/dr;
+        pos.yz = pos.zy;
+        float exp = constants.exp.x;
+        vec3 w = pos;
+        float m = dot(w,w);
+
+        vec4 trap = vec4(abs(w),m);
+        float dz = 1.0;
+
+        for( int i=0; i<8; i++ ) {
+                dz = exp*pow(sqrt(m),exp-1)*dz + 1.0;
+
+                float r = length(w);
+                float b = exp*acos( w.y/r);
+                float a = exp*atan( w.x, w.z );
+                w = pos + pow(r,exp) * vec3( sin(b)*sin(a), cos(b), sin(b)*cos(a) );
+
+                m = dot(w,w);
+                if( m > 256.0 ) break;
+        }
+
+        return 0.25*log(m)*sqrt(m)/dz;
 }
 
 float distance_fun(vec3 pos) {
@@ -69,7 +68,7 @@ vec3 march(vec3 pos, vec3 dir) {
                 last_step_len = dist;
 
         	float dist_to_cam = length(constants.eye.xyz - pos);
-                threshold = max(dist_to_cam * 0.005, 0.00001);
+                threshold = max(dist_to_cam * 0.001, 0.0001);
 	}
 
 	return pos;

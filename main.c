@@ -4,16 +4,16 @@
 
 #include "external/cglm/include/cglm/cglm.h"
 
-#include "external/render-c-linked/src/base.h"
-#include "external/render-c-linked/src/buffer.h"
-#include "external/render-c-linked/src/glfw_error.h"
-#include "external/render-c-linked/src/image.h"
-#include "external/render-c-linked/src/pipeline.h"
-#include "external/render-c-linked/src/rpass.h"
-#include "external/render-c-linked/src/set.h"
-#include "external/render-c-linked/src/shader.h"
-#include "external/render-c-linked/src/swapchain.h"
-#include "external/render-c-linked/src/sync.h"
+#include "external/render-c/src/base.h"
+#include "external/render-c/src/buffer.h"
+#include "external/render-c/src/glfw_error.h"
+#include "external/render-c/src/image.h"
+#include "external/render-c/src/pipeline.h"
+#include "external/render-c/src/rpass.h"
+#include "external/render-c/src/set.h"
+#include "external/render-c/src/shader.h"
+#include "external/render-c/src/swapchain.h"
+#include "external/render-c/src/sync.h"
 
 #include "external/render-utils/src/camera.h"
 #include "external/render-utils/src/timer.h"
@@ -24,11 +24,11 @@ const char* DEVICE_EXTS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 const int DEVICE_EXT_CT = 1;
 
 const double MOUSE_SENSITIVITY_FACTOR = 0.001;
-const float MOVEMENT_SPEED = 1.0F;
+const float MOVEMENT_SPEED = 0.6F;
 
 #define CONCURRENT_FRAMES 4
 
-const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_SRGB;
+const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_UNORM;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 
 struct SyncSet {
@@ -41,7 +41,8 @@ struct PushConstants {
         vec4 forward;
         vec4 eye;
         vec4 dir;
-        float aspect;
+        vec4 aspect;
+        vec4 exp;
 };
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
@@ -69,6 +70,7 @@ int main() {
 
         const VkSampleCountFlagBits sample_ct = base.max_samples > VK_SAMPLE_COUNT_4_BIT ?
        		VK_SAMPLE_COUNT_4_BIT : base.max_samples;
+       	assert(sample_ct > VK_SAMPLE_COUNT_1_BIT);
 
 	// Swapchain
         struct Swapchain swapchain;
@@ -121,15 +123,14 @@ int main() {
         vkDestroyShaderModule(base.device, vs, NULL);
         vkDestroyShaderModule(base.device, fs, NULL);
 
-	// Color image (multisampled if supported)
-	struct Image color_multi;
+	struct Image color_image;
 	image_create_color(base.phys_dev, base.device, swapchain.format,
-                           swapchain.width, swapchain.height, sample_ct, &color_multi);
+                           swapchain.width, swapchain.height, sample_ct, &color_image);
 
         // Framebuffers
         VkFramebuffer* framebuffers = malloc(swapchain.image_ct * sizeof(framebuffers[0]));
         for (int i = 0; i < swapchain.image_ct; i++) {
-                VkImageView views[] = {color_multi.view, swapchain.views[i]};
+                VkImageView views[] = {color_image.view, swapchain.views[i]};
                 framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
                                    sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
         }
@@ -153,6 +154,9 @@ int main() {
 	camera.eye[0] = 0.0F; camera.eye[1] = 0.0F; camera.eye[2] = 0.0F; 
 	double last_mouse_x, last_mouse_y;
 	glfwGetCursorPos(window, &last_mouse_x, &last_mouse_y);
+
+	// Exponent for SDF
+	float sdf_exp = 1.0F;
 
 	// Main loop
         int frame_ct = 0;
@@ -179,15 +183,15 @@ int main() {
                                 sync_set_create(base.device, &sync_sets[i]);
                         }
 
-                        image_destroy(base.device, &color_multi);
+                        image_destroy(base.device, &color_image);
                 	image_create_color(base.phys_dev, base.device, swapchain.format,
                                            swapchain.width, swapchain.height,
-                                           sample_ct, &color_multi);
+                                           sample_ct, &color_image);
 
-                         for (int i = 0; i < swapchain.image_ct; i++) {
+                        for (int i = 0; i < swapchain.image_ct; i++) {
                                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
 
-                                VkImageView views[] = {color_multi.view, swapchain.views[i]};
+                                VkImageView views[] = {color_image.view, swapchain.views[i]};
                                 framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
                                                    sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
 
@@ -214,6 +218,9 @@ int main() {
         	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) cam_movement[2] -= MOVEMENT_SPEED;
         	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) cam_movement[0] -= MOVEMENT_SPEED;
         	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) cam_movement[0] += MOVEMENT_SPEED;
+
+        	if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) sdf_exp += delta * 0.2;
+        	if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS) sdf_exp -= delta * 0.2;
 
         	// Update camera
         	camera_fly_update(&camera,
@@ -247,7 +254,6 @@ int main() {
                 cbuf_begin_onetime(cbuf);
 
                 VkClearValue clear_vals[] = {{{{0.0F, 0.0F, 0.0F, 1.0F}}},
-                                             {{{1.0F, 0.0F}}},
                                              {{{0.0F, 0.0F, 0.0F, 1.0F}}}};
 
                 VkRenderPassBeginInfo cbuf_rpass_info = {0};
@@ -283,7 +289,8 @@ int main() {
                 pushc_data.eye[2] = camera.eye[2];
                 pushc_data.dir[0] = camera.yaw;
                 pushc_data.dir[1] = camera.pitch;
-                pushc_data.aspect = (float) swapchain.width / (float) swapchain.height;
+                pushc_data.aspect[0] = (float) swapchain.width / (float) swapchain.height;
+                pushc_data.exp[0] = sdf_exp;
 
 		vkCmdPushConstants(cbuf, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		                   0, sizeof(struct PushConstants), &pushc_data);
@@ -350,6 +357,8 @@ int main() {
 
         swapchain_destroy(base.device, &swapchain);
 
+        image_destroy(base.device, &color_image);
+
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 sync_set_destroy(base.device, &sync_sets[i]);
         }
@@ -357,8 +366,6 @@ int main() {
         for (int i = 0; i < swapchain.image_ct; i++) {
                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
         }
-
-        image_destroy(base.device, &color_multi);
 
         base_destroy(&base);
 
