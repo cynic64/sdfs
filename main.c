@@ -38,11 +38,11 @@ struct SyncSet {
 };
 
 struct PushConstants {
-        vec4 forward;
-        vec4 eye;
-        vec4 dir;
-        vec4 aspect;
-        vec4 exp;
+	// Pad to vec4 because std140
+	vec4 iResolution;
+	vec4 iMouse;
+	float iFrame[1];
+	float iTime[1];
 };
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
@@ -112,8 +112,8 @@ int main() {
         // Pipeline
         struct PipelineSettings pipeline_settings = PIPELINE_SETTINGS_DEFAULT;
         pipeline_settings.multisampling.rasterizationSamples = sample_ct;
-        pipeline_settings.multisampling.sampleShadingEnable = VK_TRUE;
-        pipeline_settings.multisampling.minSampleShading = 1.0;
+        pipeline_settings.multisampling.sampleShadingEnable = VK_FALSE;
+        //pipeline_settings.multisampling.minSampleShading = 1.0;
 
 	VkPipeline pipeline;
 	pipeline_create(base.device, &pipeline_settings,
@@ -281,18 +281,16 @@ int main() {
                 vkCmdSetScissor(cbuf, 0, 1, &scissor);
 
                 struct PushConstants pushc_data;
-                pushc_data.forward[0] = camera.forward[0];
-                pushc_data.forward[1] = camera.forward[1];
-                pushc_data.forward[2] = camera.forward[2];
-                pushc_data.eye[0] = camera.eye[0];
-                pushc_data.eye[1] = camera.eye[1];
-                pushc_data.eye[2] = camera.eye[2];
-                pushc_data.dir[0] = camera.yaw;
-                pushc_data.dir[1] = camera.pitch;
-                pushc_data.aspect[0] = (float) swapchain.width / (float) swapchain.height;
-                pushc_data.exp[0] = sdf_exp;
+		pushc_data.iResolution[0] = swapchain.width;
+		pushc_data.iResolution[1] = swapchain.height;
+		pushc_data.iMouse[0] = new_mouse_x;
+		pushc_data.iMouse[1] = new_mouse_y;
+		pushc_data.iMouse[2] = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+		pushc_data.iFrame[0] = frame_ct;
+		pushc_data.iTime[0] = timer_get_elapsed(&start_time);
 
-		vkCmdPushConstants(cbuf, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+		vkCmdPushConstants(cbuf, pipeline_layout,
+				   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		                   0, sizeof(struct PushConstants), &pushc_data);
                 vkCmdDraw(cbuf, 6, 1, 0, 0);
 
