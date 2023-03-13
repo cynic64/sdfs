@@ -5,9 +5,12 @@ layout (push_constant, std140) uniform PushConstants {
        vec4 iMouse;
        float iFrame;
        float iTime;
+       vec4 forward;
+       vec4 eye;
+       vec4 dir;
 } constants;
 
-layout (location = 0) in vec2 fragCoord;
+layout (location = 0) in vec3 ray_dir;
 
 layout (location = 0) out vec4 fragColor;
 
@@ -319,7 +322,8 @@ float sdU( in vec3 p, in float r, in float le, vec2 w )
     return length(max(q,0.0)) + min(max(q.x,q.y),0.0);
 }
 
-//------------------------------------------------------------------
+//---
+---------------------------------------------------------------
 
 vec2 opU( vec2 d1, vec2 d2 )
 {
@@ -601,41 +605,9 @@ mat3 setCamera( in vec3 ro, in vec3 ta, float cr )
 
 void main()
 {
-    vec2 mo = constants.iMouse.xy/constants.iResolution.xy;
-    float time = 32.0 + constants.iTime*1.5;
-
-    // camera	
-    vec3 ta = vec3( 0.25, -0.75, -0.75 );
-    vec3 ro = ta + vec3( 4.5*cos(0.1*time + 7.0*mo.x), 2.2, 4.5*sin(0.1*time + 7.0*mo.x) );
-    // camera-to-world transformation
-    mat3 ca = setCamera( ro, ta, 0.0 );
-
-    vec3 tot = vec3(0.0);
-    vec2 p = (2.0*fragCoord-constants.iResolution.xy)/constants.iResolution.y;
-    p.y *= -1;
-
-    // focal length
-    const float fl = 2.5;
-
-    // ray direction
-    vec3 rd = ca * normalize( vec3(p,fl) );
-
-    // ray differentials
-    vec2 px = (2.0*(fragCoord+vec2(1.0,0.0))-constants.iResolution.xy)/constants.iResolution.y;
-    vec2 py = -(2.0*(fragCoord+vec2(0.0,1.0))-constants.iResolution.xy)/constants.iResolution.y;
-    vec3 rdx = ca * normalize( vec3(px,fl) );
-    vec3 rdy = ca * normalize( vec3(py,fl) );
-
-    // render	
-    vec3 col = render( ro, rd, rdx, rdy );
-
-    // gain
-    // col = col*3.0/(2.5+col);
-
-    // gamma
-    col = pow( col, vec3(0.4545) );
-
-    tot += col;
-    
-    fragColor = vec4( tot, 1.0 );
+	vec3 ray_origin = constants.eye.xyz;
+	vec3 col = render(ray_origin, ray_dir, vec3(0.1), vec3(0.1));
+	// gamma
+	col = pow( col, vec3(0.4545) );
+	fragColor = vec4( col, 1.0 );
 }

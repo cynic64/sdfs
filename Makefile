@@ -3,7 +3,7 @@ EXTRA=
 CFLAGS=-O2 -Wall -Wextra -pedantic -Wno-sign-compare -I. $(EXTRA)
 LIBS=-lvulkan -lglfw -lm
 
-main: main.c shaders external/
+main: main.c shaders external/ shaders/* external/render-c/*
 	$(CC) $(CFLAGS) $(LIBS) main.c -o main
 
 shaders: shaders/*

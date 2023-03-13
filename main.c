@@ -43,6 +43,10 @@ struct PushConstants {
 	vec4 iMouse;
 	float iFrame[1];
 	float iTime[1];
+	// Camera stuff
+	vec4 forward;
+	vec4 eye;
+	vec4 dir;
 };
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
@@ -112,8 +116,6 @@ int main() {
         // Pipeline
         struct PipelineSettings pipeline_settings = PIPELINE_SETTINGS_DEFAULT;
         pipeline_settings.multisampling.rasterizationSamples = sample_ct;
-        pipeline_settings.multisampling.sampleShadingEnable = VK_FALSE;
-        //pipeline_settings.multisampling.minSampleShading = 1.0;
 
 	VkPipeline pipeline;
 	pipeline_create(base.device, &pipeline_settings,
@@ -288,6 +290,10 @@ int main() {
 		pushc_data.iMouse[2] = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
 		pushc_data.iFrame[0] = frame_ct;
 		pushc_data.iTime[0] = timer_get_elapsed(&start_time);
+		memcpy(pushc_data.forward, camera.forward, sizeof(camera.forward));
+		memcpy(pushc_data.eye, camera.eye, sizeof(camera.eye));
+		pushc_data.dir[0] = camera.yaw;
+		pushc_data.dir[0] = camera.pitch;
 
 		vkCmdPushConstants(cbuf, pipeline_layout,
 				   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
