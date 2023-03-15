@@ -10,6 +10,11 @@ layout (push_constant, std140) uniform PushConstants {
        vec4 dir;
 } constants;
 
+layout (std140, set = 0, binding = 0) uniform Uniform {
+	int box_count;
+	vec4 box_poss[256];
+} uni;
+
 struct RayShot {
 	vec3 closest;
 	bool hit;
@@ -25,15 +30,25 @@ float sd_box(vec3 point, vec3 box_size) {
 	return min(max(d.x,max(d.y,d.z)),0.0) + length(max(d,0.0));
 }
 
+float sd_sphere(vec3 point, float radius) {
+	return length(point) - radius;
+}
+
 float scene_sdf(vec3 point) {
-	vec3 box_size = vec3(0.2, 0.5, 0.3);
-	return sd_box(point, box_size);
+	float min_dist = 99999999;
+	vec3 box_size = vec3(1, 2, 3);
+	for (int i = 0; i < uni.box_count; i++) {
+		float dist = sd_box(point - uni.box_poss[i].xyz, box_size);
+		if (dist < min_dist) min_dist = dist;
+	}
+
+	return min_dist;
 }
 
 RayShot raymarch(vec3 ray_origin, vec3 ray_dir) {
-	float threshold = 0.02;
+	float threshold = 0.005;
 	float depth = 0;
-	for (int i = 0; i < 50; i++) {
+	for (int i = 0; i < 128; i++) {
 		vec3 point = ray_origin + ray_dir * depth;
 		float dist = scene_sdf(point);
 		if (dist < threshold) {
@@ -52,7 +67,7 @@ RayShot raymarch(vec3 ray_origin, vec3 ray_dir) {
 
 // Taken from iquilezles.org/articles/normalsSDF/
 vec3 calc_normal(in vec3 point) {
-    const float h = 0.02;
+    const float h = 0.0002;
     const vec2 k = vec2(1,-1);
     return normalize(k.xyy*scene_sdf(point + k.xyy*h)
 		     + k.yyx*scene_sdf(point + k.yyx*h)

@@ -1,3 +1,4 @@
+#include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
@@ -49,6 +50,13 @@ struct PushConstants {
 	vec4 dir;
 };
 
+#define MAX_BOX_COUNT 256
+
+struct Uniform {
+	int box_count;
+	vec4 box_poss[MAX_BOX_COUNT];
+};
+
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
         fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->render_fence);
         semaphore_create(device, &sync_set->acquire_sem);
@@ -98,6 +106,60 @@ int main() {
 	VkRenderPass rpass;
 	rpass_color_multi(base.device, swapchain.format, sample_ct, &rpass);
 
+	// Allocate uniform buffer
+	struct Uniform uniform_data = {0};
+	uniform_data.box_count = 20;
+
+	for (int i = 0; i < MAX_BOX_COUNT; i++) {
+		uniform_data.box_poss[i][0] = i;
+		uniform_data.box_poss[i][1] = i;
+		uniform_data.box_poss[i][2] = i;
+	};
+
+	struct Buffer uniform_buf;
+	buffer_staged(base.phys_dev, base.device, base.queue, base.cpool,
+		      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+		      sizeof(struct Uniform), &uniform_data, &uniform_buf);
+
+	// Create descriptors
+	VkDescriptorBufferInfo set_desc_buf = {0};
+	set_desc_buf.buffer = uniform_buf.handle;
+	set_desc_buf.range = VK_WHOLE_SIZE;
+
+	struct Descriptor set_desc = {0};
+	set_desc.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	set_desc.binding = 0;
+	set_desc.shader_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	set_desc.buffer = set_desc_buf;
+
+	// Create descriptor pool
+	VkDescriptorPoolSize dpool_size = {0};
+	dpool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	dpool_size.descriptorCount = 1;
+
+	VkDescriptorPoolCreateInfo dpool_info = {0};
+	dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	dpool_info.maxSets = CONCURRENT_FRAMES;
+	dpool_info.poolSizeCount = 1;
+	dpool_info.pPoolSizes = &dpool_size;
+
+	VkDescriptorPool dpool;
+	VkResult res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
+	assert(res == VK_SUCCESS);
+
+	VkDescriptorSetLayoutBinding set_binding = {0};
+	set_binding.binding = 0;
+	set_binding.descriptorCount = 1;
+	set_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	set_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+	VkDescriptorSetLayout set_layout;
+	set_layout_create(base.device, 1, &set_binding, &set_layout);
+
+	// Finally create the set
+	VkDescriptorSet set;
+	set_create(base.device, dpool, set_layout, 1, &set_desc, &set);
+
         // Pipeline layout
 	VkPushConstantRange pushc_range = {0};
         pushc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -108,9 +170,11 @@ int main() {
         pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipeline_layout_info.pushConstantRangeCount = 1;
         pipeline_layout_info.pPushConstantRanges = &pushc_range;
+	pipeline_layout_info.setLayoutCount = 1;
+	pipeline_layout_info.pSetLayouts = &set_layout;
 
         VkPipelineLayout pipeline_layout;
-        VkResult res = vkCreatePipelineLayout(base.device, &pipeline_layout_info, NULL, &pipeline_layout);
+        res = vkCreatePipelineLayout(base.device, &pipeline_layout_info, NULL, &pipeline_layout);
         assert(res == VK_SUCCESS);
 
         // Pipeline
@@ -216,10 +280,19 @@ int main() {
 
         	// Keys
         	vec3 cam_movement = {0.0F, 0.0F, 0.0F};
-        	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) cam_movement[2] += MOVEMENT_SPEED;
-        	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) cam_movement[2] -= MOVEMENT_SPEED;
-        	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) cam_movement[0] -= MOVEMENT_SPEED;
-        	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) cam_movement[0] += MOVEMENT_SPEED;
+		float speed_multiplier = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS ? 20 : 1;
+        	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+			cam_movement[2] += MOVEMENT_SPEED * speed_multiplier;
+        	}
+		if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+			  cam_movement[2] -= MOVEMENT_SPEED * speed_multiplier;
+        	}
+		if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+			  cam_movement[0] -= MOVEMENT_SPEED * speed_multiplier;
+        	}
+		if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+			  cam_movement[0] += MOVEMENT_SPEED * speed_multiplier;
+		} 
 
         	if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) sdf_exp += delta * 0.2;
         	if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS) sdf_exp -= delta * 0.2;
@@ -298,6 +371,7 @@ int main() {
 		vkCmdPushConstants(cbuf, pipeline_layout,
 				   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		                   0, sizeof(struct PushConstants), &pushc_data);
+		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &set, 0, NULL);
                 vkCmdDraw(cbuf, 6, 1, 0, 0);
 
                 vkCmdEndRenderPass(cbuf);
@@ -371,6 +445,9 @@ int main() {
                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
         }
 
+	vkDestroyDescriptorPool(base.device, dpool, NULL);
+	vkDestroyDescriptorSetLayout(base.device, set_layout, NULL);
+	buffer_destroy(base.device, &uniform_buf);
         base_destroy(&base);
 
         glfwTerminate();
