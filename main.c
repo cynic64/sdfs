@@ -125,8 +125,11 @@ int main() {
 	dpool_create(base.device, 1, &set_desc, &dpool);
 	
 	// Create the set
-	struct Set set;
-	set_create(base.device, dpool, &set_info, &set);
+	VkDescriptorSetLayout set_layout;
+	set_layout_create(base.device, &set_info, &set_layout);
+
+	VkDescriptorSet set;
+	set_create(base.device, dpool, set_layout, &set_info, &set);
 
         // Pipeline layout
 	VkPushConstantRange pushc_range = {0};
@@ -138,7 +141,7 @@ int main() {
         pipeline_layout_info.pushConstantRangeCount = 1;
         pipeline_layout_info.pPushConstantRanges = &pushc_range;
 	pipeline_layout_info.setLayoutCount = 1;
-	pipeline_layout_info.pSetLayouts = &set.layout;
+	pipeline_layout_info.pSetLayouts = &set_layout;
 
         VkPipelineLayout pipeline_layout;
         res = vkCreatePipelineLayout(base.device, &pipeline_layout_info, NULL, &pipeline_layout);
@@ -254,7 +257,8 @@ int main() {
 
         	// Update camera
         	camera_fly_update(&camera,
-                                  d_mouse_x * MOUSE_SENSITIVITY_FACTOR, d_mouse_y * MOUSE_SENSITIVITY_FACTOR,
+                                  d_mouse_x * MOUSE_SENSITIVITY_FACTOR,
+				  d_mouse_y * MOUSE_SENSITIVITY_FACTOR,
         	                  cam_movement, delta);
 
 		// Set up frame
@@ -340,7 +344,7 @@ int main() {
 				   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		                   0, sizeof(struct PushConstants), &pushc_data);
 		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
-					0, 1, &set.handle, 0, NULL);
+					0, 1, &set, 0, NULL);
                 vkCmdDraw(cbuf, 6, 1, 0, 0);
 
                 vkCmdEndRenderPass(cbuf);
@@ -413,7 +417,7 @@ int main() {
         }
 
 	vkDestroyDescriptorPool(base.device, dpool, NULL);
-	set_destroy(base.device, &set);
+	vkDestroyDescriptorSetLayout(base.device, set_layout, NULL);
 	vkUnmapMemory(base.device, uniform_buf_staging.mem);
 	buffer_destroy(base.device, &uniform_buf);
 	buffer_destroy(base.device, &uniform_buf_staging);
