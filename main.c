@@ -20,6 +20,7 @@
 #include "external/render-utils/src/timer.h"
 
 #include <assert.h>
+#include <stdlib.h>
 
 const char* DEVICE_EXTS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 const int DEVICE_EXT_CT = 1;
@@ -98,19 +99,15 @@ int main() {
 	rpass_color(base.device, swapchain.format, &rpass);
 
 	// Allocate uniform buffer
-	struct Uniform uniform_data = {0};
-	uniform_data.box_count = 20;
+	struct Buffer uniform_buf, uniform_buf_staging;
+	buffer_create_staged(base.phys_dev, base.device, base.queue, base.cpool,
+			     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			     sizeof(struct Uniform), NULL, &uniform_buf, &uniform_buf_staging);
 
-	for (int i = 0; i < MAX_BOX_COUNT; i++) {
-		uniform_data.box_poss[i][0] = i;
-		uniform_data.box_poss[i][1] = i;
-		uniform_data.box_poss[i][2] = i;
-	};
-
-	struct Buffer uniform_buf;
-	buffer_staged(base.phys_dev, base.device, base.queue, base.cpool,
-		      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-		      sizeof(struct Uniform), &uniform_data, &uniform_buf);
+	struct Uniform* uniform_data;
+	VkResult res = vkMapMemory(base.device, uniform_buf_staging.mem, 0, sizeof(struct Uniform),
+				   0, (void **) &uniform_data);
+	assert(res == VK_SUCCESS);
 
 	// Create descriptors
 	VkDescriptorBufferInfo set_desc_buf = {0};
@@ -135,7 +132,7 @@ int main() {
 	dpool_info.pPoolSizes = &dpool_size;
 
 	VkDescriptorPool dpool;
-	VkResult res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
+	res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
 	assert(res == VK_SUCCESS);
 
 	VkDescriptorSetLayoutBinding set_binding = {0};
@@ -297,6 +294,20 @@ int main() {
                 res = vkWaitForFences(base.device, 1, &sync_set->render_fence, VK_TRUE, UINT64_MAX);
                 assert(res == VK_SUCCESS);
 
+		// Update uniform buffer
+		uniform_data->box_count = 20;
+
+		srand(0);
+		double elapsed = timer_get_elapsed(&start_time);
+		for (int i = 0; i < MAX_BOX_COUNT; i++) {
+			uniform_data->box_poss[i][0] = rand() % 64 * sin(elapsed);
+			uniform_data->box_poss[i][1] = rand() % 64 * cos(elapsed);
+			uniform_data->box_poss[i][2] = rand() % 64 * sin(elapsed + 3.14159265);
+		};
+
+		buffer_copy(base.queue, cbuf, uniform_buf_staging.handle, uniform_buf.handle,
+			    sizeof(struct Uniform));
+
                 // Reset command buffer
                 vkResetCommandBuffer(cbuf, 0);
 
@@ -310,7 +321,6 @@ int main() {
                 } else assert(res == VK_SUCCESS);
 
                 // Record command buffer
-
                 cbuf_begin_onetime(cbuf);
 
                 VkClearValue clear_vals[] = {{{{0.0F, 0.0F, 0.0F, 1.0F}}},
@@ -356,7 +366,8 @@ int main() {
 		vkCmdPushConstants(cbuf, pipeline_layout,
 				   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		                   0, sizeof(struct PushConstants), &pushc_data);
-		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &set, 0, NULL);
+		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
+					0, 1, &set, 0, NULL);
                 vkCmdDraw(cbuf, 6, 1, 0, 0);
 
                 vkCmdEndRenderPass(cbuf);
@@ -430,7 +441,9 @@ int main() {
 
 	vkDestroyDescriptorPool(base.device, dpool, NULL);
 	vkDestroyDescriptorSetLayout(base.device, set_layout, NULL);
+	vkUnmapMemory(base.device, uniform_buf_staging.mem);
 	buffer_destroy(base.device, &uniform_buf);
+	buffer_destroy(base.device, &uniform_buf_staging);
         base_destroy(&base);
 
         glfwTerminate();
