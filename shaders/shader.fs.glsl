@@ -36,9 +36,8 @@ float sd_sphere(vec3 point, float radius) {
 
 float scene_sdf(vec3 point) {
 	float min_dist = 99999999;
-	vec3 box_size = vec3(1, 2, 3);
 	for (int i = 0; i < uni.box_count; i++) {
-		float dist = sd_box(point - uni.box_poss[i].xyz, box_size);
+		float dist = sd_sphere(point - uni.box_poss[i].xyz, 4);
 		if (dist < min_dist) min_dist = dist;
 	}
 

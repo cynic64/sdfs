@@ -200,7 +200,7 @@ int main() {
 	struct CameraFly camera;
 	camera.pitch = 0.0F;
 	camera.yaw = 0.0F;
-	camera.eye[0] = 0.0F; camera.eye[1] = 0.0F; camera.eye[2] = 0.0F; 
+	camera.eye[0] = 0.0F; camera.eye[1] = 0.0F; camera.eye[2] = -100.0F; 
 	double last_mouse_x, last_mouse_y;
 	glfwGetCursorPos(window, &last_mouse_x, &last_mouse_y);
 
@@ -295,7 +295,7 @@ int main() {
                 assert(res == VK_SUCCESS);
 
 		// Update uniform buffer
-		uniform_data->box_count = 20;
+		uniform_data->box_count = 40;
 
 		srand(0);
 		double elapsed = timer_get_elapsed(&start_time);
