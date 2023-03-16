@@ -109,49 +109,28 @@ int main() {
 				   0, (void **) &uniform_data);
 	assert(res == VK_SUCCESS);
 
-	// Create descriptors
-	VkDescriptorBufferInfo set_desc_buf = {0};
-	set_desc_buf.buffer = uniform_buf.handle;
-	set_desc_buf.range = VK_WHOLE_SIZE;
-
-	struct Descriptor set_desc = {0};
+	// Create descriptor set
+	struct DescriptorInfo set_desc = {0};
 	set_desc.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-	set_desc.binding = 0;
 	set_desc.shader_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
-	set_desc.buffer = set_desc_buf;
+	set_desc.buffer.buffer = uniform_buf.handle;
+	set_desc.buffer.range = VK_WHOLE_SIZE;
+
+	struct SetInfo set_info = {0};
+	set_info.desc_ct = 1;
+	set_info.descs = &set_desc;
 
 	// Create descriptor pool
-	VkDescriptorPoolSize dpool_size = {0};
-	dpool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-	dpool_size.descriptorCount = 1;
-
-	VkDescriptorPoolCreateInfo dpool_info = {0};
-	dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-	dpool_info.maxSets = CONCURRENT_FRAMES;
-	dpool_info.poolSizeCount = 1;
-	dpool_info.pPoolSizes = &dpool_size;
-
 	VkDescriptorPool dpool;
-	res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
-	assert(res == VK_SUCCESS);
-
-	VkDescriptorSetLayoutBinding set_binding = {0};
-	set_binding.binding = 0;
-	set_binding.descriptorCount = 1;
-	set_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-	set_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-	VkDescriptorSetLayout set_layout;
-	set_layout_create(base.device, 1, &set_binding, &set_layout);
-
-	// Finally create the set
-	VkDescriptorSet set;
-	set_create(base.device, dpool, set_layout, 1, &set_desc, &set);
+	dpool_create(base.device, 1, &set_desc, &dpool);
+	
+	// Create the set
+	struct Set set;
+	set_create(base.device, dpool, &set_info, &set);
 
         // Pipeline layout
 	VkPushConstantRange pushc_range = {0};
         pushc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        pushc_range.offset = 0;
         pushc_range.size = sizeof(struct PushConstants);
 
         VkPipelineLayoutCreateInfo pipeline_layout_info = {0};
@@ -159,7 +138,7 @@ int main() {
         pipeline_layout_info.pushConstantRangeCount = 1;
         pipeline_layout_info.pPushConstantRanges = &pushc_range;
 	pipeline_layout_info.setLayoutCount = 1;
-	pipeline_layout_info.pSetLayouts = &set_layout;
+	pipeline_layout_info.pSetLayouts = &set.layout;
 
         VkPipelineLayout pipeline_layout;
         res = vkCreatePipelineLayout(base.device, &pipeline_layout_info, NULL, &pipeline_layout);
@@ -203,9 +182,6 @@ int main() {
 	camera.eye[0] = 0.0F; camera.eye[1] = 0.0F; camera.eye[2] = -100.0F; 
 	double last_mouse_x, last_mouse_y;
 	glfwGetCursorPos(window, &last_mouse_x, &last_mouse_y);
-
-	// Exponent for SDF
-	float sdf_exp = 1.0F;
 
 	// Main loop
         int frame_ct = 0;
@@ -275,9 +251,6 @@ int main() {
 		if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
 			  cam_movement[0] += MOVEMENT_SPEED * speed_multiplier;
 		} 
-
-        	if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) sdf_exp += delta * 0.2;
-        	if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS) sdf_exp -= delta * 0.2;
 
         	// Update camera
         	camera_fly_update(&camera,
@@ -367,7 +340,7 @@ int main() {
 				   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		                   0, sizeof(struct PushConstants), &pushc_data);
 		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
-					0, 1, &set, 0, NULL);
+					0, 1, &set.handle, 0, NULL);
                 vkCmdDraw(cbuf, 6, 1, 0, 0);
 
                 vkCmdEndRenderPass(cbuf);
@@ -440,7 +413,7 @@ int main() {
         }
 
 	vkDestroyDescriptorPool(base.device, dpool, NULL);
-	vkDestroyDescriptorSetLayout(base.device, set_layout, NULL);
+	set_destroy(base.device, &set);
 	vkUnmapMemory(base.device, uniform_buf_staging.mem);
 	buffer_destroy(base.device, &uniform_buf);
 	buffer_destroy(base.device, &uniform_buf_staging);
