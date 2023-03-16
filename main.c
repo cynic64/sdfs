@@ -80,31 +80,22 @@ int main() {
         struct Base base;
         base_create(window, 1, 0, NULL, DEVICE_EXT_CT, DEVICE_EXTS, &base);
 
-        const VkSampleCountFlagBits sample_ct = base.max_samples > VK_SAMPLE_COUNT_4_BIT ?
-       		VK_SAMPLE_COUNT_4_BIT : base.max_samples;
-       	assert(sample_ct > VK_SAMPLE_COUNT_1_BIT);
-
 	// Swapchain
         struct Swapchain swapchain;
-        swapchain_create(base.surface, base.phys_dev, base.device, SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
+        swapchain_create(base.surface, base.phys_dev, base.device,
+			 SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
         // Load shaders
-        VkShaderModule vs = load_shader(base.device, "shaders/shader.vs.spv");
-        VkShaderModule fs = load_shader(base.device, "shaders/shader.fs.spv");
-
+        VkShaderModule vs, fs;
         VkPipelineShaderStageCreateInfo shaders[2] = {0};
-        shaders[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        shaders[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-        shaders[0].module = vs;
-        shaders[0].pName = "main";
-        shaders[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        shaders[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        shaders[1].module = fs;
-        shaders[1].pName = "main";
+	load_shader(base.device, "shaders/shader.vs.spv",
+		    &vs, VK_SHADER_STAGE_VERTEX_BIT, &shaders[0]);
+	load_shader(base.device, "shaders/shader.fs.spv",
+		    &fs, VK_SHADER_STAGE_FRAGMENT_BIT, &shaders[1]);
 
         // Render pass
 	VkRenderPass rpass;
-	rpass_color_multi(base.device, swapchain.format, sample_ct, &rpass);
+	rpass_color(base.device, swapchain.format, &rpass);
 
 	// Allocate uniform buffer
 	struct Uniform uniform_data = {0};
@@ -179,7 +170,6 @@ int main() {
 
         // Pipeline
         struct PipelineSettings pipeline_settings = PIPELINE_SETTINGS_DEFAULT;
-        pipeline_settings.multisampling.rasterizationSamples = sample_ct;
 
 	VkPipeline pipeline;
 	pipeline_create(base.device, &pipeline_settings,
@@ -189,14 +179,10 @@ int main() {
         vkDestroyShaderModule(base.device, vs, NULL);
         vkDestroyShaderModule(base.device, fs, NULL);
 
-	struct Image color_image;
-	image_create_color(base.phys_dev, base.device, swapchain.format,
-                           swapchain.width, swapchain.height, sample_ct, &color_image);
-
         // Framebuffers
         VkFramebuffer* framebuffers = malloc(swapchain.image_ct * sizeof(framebuffers[0]));
         for (int i = 0; i < swapchain.image_ct; i++) {
-                VkImageView views[] = {color_image.view, swapchain.views[i]};
+                VkImageView views[] = {swapchain.views[i]};
                 framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
                                    sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
         }
@@ -249,24 +235,23 @@ int main() {
                                 sync_set_create(base.device, &sync_sets[i]);
                         }
 
-                        image_destroy(base.device, &color_image);
-                	image_create_color(base.phys_dev, base.device, swapchain.format,
-                                           swapchain.width, swapchain.height,
-                                           sample_ct, &color_image);
-
                         for (int i = 0; i < swapchain.image_ct; i++) {
                                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
 
-                                VkImageView views[] = {color_image.view, swapchain.views[i]};
-                                framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
-                                                   sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
+                                VkImageView views[] = {swapchain.views[i]};
+                                framebuffer_create(base.device, rpass,
+						   swapchain.width, swapchain.height,
+                                                   sizeof(views) / sizeof(views[0]), views,
+						   &framebuffers[i]);
 
                                 image_fences[i] = VK_NULL_HANDLE;
                         }
 
                         int real_width, real_height;
                         glfwGetFramebufferSize(window, &real_width, &real_height);
-                        if (real_width != swapchain.width || real_height != swapchain.height) must_recreate = 1;
+                        if (real_width != swapchain.width || real_height != swapchain.height) {
+				must_recreate = 1;
+			}
                 }
 
                 // Handle input
@@ -434,8 +419,6 @@ int main() {
         vkDestroyRenderPass(base.device, rpass, NULL);
 
         swapchain_destroy(base.device, &swapchain);
-
-        image_destroy(base.device, &color_image);
 
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 sync_set_destroy(base.device, &sync_sets[i]);
