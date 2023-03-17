@@ -49,6 +49,8 @@ struct PushConstants {
 	vec4 forward;
 	vec4 eye;
 	vec4 dir;
+	mat4 view;
+	mat4 proj;
 };
 
 #define MAX_BOX_COUNT 256
@@ -87,12 +89,21 @@ int main() {
 			 SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
         // Load shaders
-        VkShaderModule vs, fs;
-        VkPipelineShaderStageCreateInfo shaders[2] = {0};
-	load_shader(base.device, "shaders/shader.vs.spv",
-		    &vs, VK_SHADER_STAGE_VERTEX_BIT, &shaders[0]);
-	load_shader(base.device, "shaders/shader.fs.spv",
-		    &fs, VK_SHADER_STAGE_FRAGMENT_BIT, &shaders[1]);
+        VkShaderModule fullscreen_vs, fullscreen_fs, boxes_vs, boxes_fs;
+        VkPipelineShaderStageCreateInfo fullscreen_shaders[2] = {0};
+        VkPipelineShaderStageCreateInfo boxes_shaders[2] = {0};
+
+	// Fullscreen
+	load_shader(base.device, "shaders/fullscreen.vs.spv",
+		    &fullscreen_vs, VK_SHADER_STAGE_VERTEX_BIT, &fullscreen_shaders[0]);
+	load_shader(base.device, "shaders/fullscreen.fs.spv",
+		    &fullscreen_fs, VK_SHADER_STAGE_FRAGMENT_BIT, &fullscreen_shaders[1]);
+
+	// Bounding boxes
+	load_shader(base.device, "shaders/bounding_boxes.vs.spv",
+		    &boxes_vs, VK_SHADER_STAGE_VERTEX_BIT, &boxes_shaders[0]);
+	load_shader(base.device, "shaders/bounding_boxes.fs.spv",
+		    &boxes_fs, VK_SHADER_STAGE_FRAGMENT_BIT, &boxes_shaders[1]);
 
         // Render pass
 	VkRenderPass rpass;
@@ -110,19 +121,19 @@ int main() {
 	assert(res == VK_SUCCESS);
 
 	// Create descriptor set
-	struct DescriptorInfo set_desc = {0};
-	set_desc.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-	set_desc.shader_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
-	set_desc.buffer.buffer = uniform_buf.handle;
-	set_desc.buffer.range = VK_WHOLE_SIZE;
+	struct DescriptorInfo uniform_desc = {0};
+	uniform_desc.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+	uniform_desc.shader_stage_flags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+	uniform_desc.buffer.buffer = uniform_buf.handle;
+	uniform_desc.buffer.range = VK_WHOLE_SIZE;
 
 	struct SetInfo set_info = {0};
 	set_info.desc_ct = 1;
-	set_info.descs = &set_desc;
+	set_info.descs = &uniform_desc;
 
 	// Create descriptor pool
 	VkDescriptorPool dpool;
-	dpool_create(base.device, 1, &set_desc, &dpool);
+	dpool_create(base.device, 1, &uniform_desc, &dpool);
 	
 	// Create the set
 	VkDescriptorSetLayout set_layout;
@@ -131,32 +142,43 @@ int main() {
 	VkDescriptorSet set;
 	set_create(base.device, dpool, set_layout, &set_info, &set);
 
-        // Pipeline layout
+        // Fullscreen pipeline
+	// Layout
 	VkPushConstantRange pushc_range = {0};
         pushc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pushc_range.size = sizeof(struct PushConstants);
 
-        VkPipelineLayoutCreateInfo pipeline_layout_info = {0};
-        pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipeline_layout_info.pushConstantRangeCount = 1;
-        pipeline_layout_info.pPushConstantRanges = &pushc_range;
-	pipeline_layout_info.setLayoutCount = 1;
-	pipeline_layout_info.pSetLayouts = &set_layout;
+        VkPipelineLayoutCreateInfo pipe_layout_info = {0};
+        pipe_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipe_layout_info.pushConstantRangeCount = 1;
+        pipe_layout_info.pPushConstantRanges = &pushc_range;
+	pipe_layout_info.setLayoutCount = 1;
+	pipe_layout_info.pSetLayouts = &set_layout;
 
-        VkPipelineLayout pipeline_layout;
-        res = vkCreatePipelineLayout(base.device, &pipeline_layout_info, NULL, &pipeline_layout);
+        VkPipelineLayout pipe_layout;
+        res = vkCreatePipelineLayout(base.device, &pipe_layout_info, NULL,
+				     &pipe_layout);
         assert(res == VK_SUCCESS);
 
-        // Pipeline
-        struct PipelineSettings pipeline_settings = PIPELINE_SETTINGS_DEFAULT;
+        // Actual pipeline
+        struct PipelineSettings pipe_settings = PIPELINE_SETTINGS_DEFAULT;
 
-	VkPipeline pipeline;
-	pipeline_create(base.device, &pipeline_settings,
-	                sizeof(shaders) / sizeof(shaders[0]), shaders,
-	                pipeline_layout, rpass, 0, &pipeline);
+	VkPipeline fullscreen_pipe;
+	pipeline_create(base.device, &pipe_settings,
+	                sizeof(fullscreen_shaders) / sizeof(fullscreen_shaders[0]), fullscreen_shaders,
+	                pipe_layout, rpass, 0, &fullscreen_pipe);
 
-        vkDestroyShaderModule(base.device, vs, NULL);
-        vkDestroyShaderModule(base.device, fs, NULL);
+        vkDestroyShaderModule(base.device, fullscreen_vs, NULL);
+        vkDestroyShaderModule(base.device, fullscreen_fs, NULL);
+
+	// Aaaaaand bounding box pipeline
+	VkPipeline boxes_pipe;
+	pipeline_create(base.device, &pipe_settings,
+	                sizeof(boxes_shaders) / sizeof(boxes_shaders[0]), boxes_shaders,
+	                pipe_layout, rpass, 0, &boxes_pipe);
+
+        vkDestroyShaderModule(base.device, boxes_vs, NULL);
+        vkDestroyShaderModule(base.device, boxes_fs, NULL);
 
         // Framebuffers
         VkFramebuffer* framebuffers = malloc(swapchain.image_ct * sizeof(framebuffers[0]));
@@ -313,7 +335,7 @@ int main() {
                 cbuf_rpass_info.pClearValues = clear_vals;
                 vkCmdBeginRenderPass(cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
 
-                vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, fullscreen_pipe);
 
                 VkViewport viewport = {0};
                 viewport.width = swapchain.width;
@@ -338,14 +360,20 @@ int main() {
 		memcpy(pushc_data.forward, camera.forward, sizeof(camera.forward));
 		memcpy(pushc_data.eye, camera.eye, sizeof(camera.eye));
 		pushc_data.dir[0] = camera.yaw;
-		pushc_data.dir[0] = camera.pitch;
+		pushc_data.dir[1] = camera.pitch;
+		memcpy(pushc_data.view, camera.view, sizeof(camera.view));
+                glm_perspective(1.0F, (float) swapchain.width / (float) swapchain.height, 0.1F,
+				10000.0F, pushc_data.proj);
 
-		vkCmdPushConstants(cbuf, pipeline_layout,
+		vkCmdPushConstants(cbuf, pipe_layout,
 				   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		                   0, sizeof(struct PushConstants), &pushc_data);
-		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
+		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_layout,
 					0, 1, &set, 0, NULL);
                 vkCmdDraw(cbuf, 6, 1, 0, 0);
+
+                vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, boxes_pipe);
+                vkCmdDraw(cbuf, 240, 1, 0, 0);
 
                 vkCmdEndRenderPass(cbuf);
 
@@ -401,8 +429,10 @@ int main() {
 
         vkDeviceWaitIdle(base.device);
 
-        vkDestroyPipeline(base.device, pipeline, NULL);
-        vkDestroyPipelineLayout(base.device, pipeline_layout, NULL);
+        vkDestroyPipeline(base.device, fullscreen_pipe, NULL);
+        vkDestroyPipelineLayout(base.device, pipe_layout, NULL);
+
+        vkDestroyPipeline(base.device, boxes_pipe, NULL);
 
         vkDestroyRenderPass(base.device, rpass, NULL);
 
