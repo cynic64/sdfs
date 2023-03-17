@@ -335,7 +335,7 @@ int main() {
                 cbuf_rpass_info.pClearValues = clear_vals;
                 vkCmdBeginRenderPass(cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
 
-                vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, fullscreen_pipe);
+                //vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, fullscreen_pipe);
 
                 VkViewport viewport = {0};
                 viewport.width = swapchain.width;
@@ -365,14 +365,14 @@ int main() {
                 glm_perspective(1.0F, (float) swapchain.width / (float) swapchain.height, 0.1F,
 				10000.0F, pushc_data.proj);
 
+                vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, boxes_pipe);
 		vkCmdPushConstants(cbuf, pipe_layout,
 				   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		                   0, sizeof(struct PushConstants), &pushc_data);
 		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_layout,
 					0, 1, &set, 0, NULL);
-                vkCmdDraw(cbuf, 6, 1, 0, 0);
+                //vkCmdDraw(cbuf, 6, 1, 0, 0);
 
-                vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, boxes_pipe);
                 vkCmdDraw(cbuf, 36 * uniform_data->box_count, 1, 0, 0);
 
                 vkCmdEndRenderPass(cbuf);
