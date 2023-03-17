@@ -32,6 +32,7 @@ const float MOVEMENT_SPEED = 0.6F;
 
 const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_UNORM;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
+const VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 
 struct SyncSet {
         VkFence render_fence;
@@ -89,15 +90,8 @@ int main() {
 			 SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
         // Load shaders
-        VkShaderModule fullscreen_vs, fullscreen_fs, boxes_vs, boxes_fs;
-        VkPipelineShaderStageCreateInfo fullscreen_shaders[2] = {0};
+        VkShaderModule boxes_vs, boxes_fs;
         VkPipelineShaderStageCreateInfo boxes_shaders[2] = {0};
-
-	// Fullscreen
-	load_shader(base.device, "shaders/fullscreen.vs.spv",
-		    &fullscreen_vs, VK_SHADER_STAGE_VERTEX_BIT, &fullscreen_shaders[0]);
-	load_shader(base.device, "shaders/fullscreen.fs.spv",
-		    &fullscreen_fs, VK_SHADER_STAGE_FRAGMENT_BIT, &fullscreen_shaders[1]);
 
 	// Bounding boxes
 	load_shader(base.device, "shaders/bounding_boxes.vs.spv",
@@ -107,7 +101,7 @@ int main() {
 
         // Render pass
 	VkRenderPass rpass;
-	rpass_color(base.device, swapchain.format, &rpass);
+	rpass_color_depth(base.device, swapchain.format, DEPTH_FORMAT, &rpass);
 
 	// Allocate uniform buffer
 	struct Buffer uniform_buf, uniform_buf_staging;
@@ -142,7 +136,7 @@ int main() {
 	VkDescriptorSet set;
 	set_create(base.device, dpool, set_layout, &set_info, &set);
 
-        // Fullscreen pipeline
+        // Pipeline
 	// Layout
 	VkPushConstantRange pushc_range = {0};
         pushc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -162,16 +156,10 @@ int main() {
 
         // Actual pipeline
         struct PipelineSettings pipe_settings = PIPELINE_SETTINGS_DEFAULT;
+	pipe_settings.depth.depthTestEnable = VK_TRUE;
+	pipe_settings.depth.depthWriteEnable = VK_TRUE;
+	pipe_settings.depth.depthCompareOp = VK_COMPARE_OP_LESS;
 
-	VkPipeline fullscreen_pipe;
-	pipeline_create(base.device, &pipe_settings,
-	                sizeof(fullscreen_shaders) / sizeof(fullscreen_shaders[0]), fullscreen_shaders,
-	                pipe_layout, rpass, 0, &fullscreen_pipe);
-
-        vkDestroyShaderModule(base.device, fullscreen_vs, NULL);
-        vkDestroyShaderModule(base.device, fullscreen_fs, NULL);
-
-	// Aaaaaand bounding box pipeline
 	VkPipeline boxes_pipe;
 	pipeline_create(base.device, &pipe_settings,
 	                sizeof(boxes_shaders) / sizeof(boxes_shaders[0]), boxes_shaders,
@@ -180,13 +168,12 @@ int main() {
         vkDestroyShaderModule(base.device, boxes_vs, NULL);
         vkDestroyShaderModule(base.device, boxes_fs, NULL);
 
-        // Framebuffers
+        // Framebuffers, we'll create them later
         VkFramebuffer* framebuffers = malloc(swapchain.image_ct * sizeof(framebuffers[0]));
-        for (int i = 0; i < swapchain.image_ct; i++) {
-                VkImageView views[] = {swapchain.views[i]};
-                framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
-                                   sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
-        }
+	bzero(framebuffers, swapchain.image_ct * sizeof(framebuffers[0]));
+	int must_recreate = 1;
+
+	struct Image depth_image = {0};
 
         // Command buffers
         VkCommandBuffer cbufs[CONCURRENT_FRAMES];
@@ -213,7 +200,6 @@ int main() {
         struct timespec start_time = timer_start();
         struct timespec last_frame_time = timer_start();
 
-        int must_recreate = 0;
         while (!glfwWindowShouldClose(window)) {
                 while (must_recreate) {
                         must_recreate = 0;
@@ -233,10 +219,23 @@ int main() {
                                 sync_set_create(base.device, &sync_sets[i]);
                         }
 
-                        for (int i = 0; i < swapchain.image_ct; i++) {
-                                vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
+			// Recreate depth
+			// Only destroy if it actually exists (it's initialized to all NULL)
+			if (depth_image.handle != NULL) {
+				image_destroy(base.device, &depth_image);
+			}
+			// Now actually recreate it
+			image_create_depth(base.phys_dev, base.device, DEPTH_FORMAT,
+					    swapchain.width, swapchain.height,
+					    VK_SAMPLE_COUNT_1_BIT, &depth_image);
 
-                                VkImageView views[] = {swapchain.views[i]};
+			// Recreate framebuffers
+                        for (int i = 0; i < swapchain.image_ct; i++) {
+				if (framebuffers[i] != NULL) {
+					vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
+				}
+
+                                VkImageView views[] = {swapchain.views[i], depth_image.view};
                                 framebuffer_create(base.device, rpass,
 						   swapchain.width, swapchain.height,
                                                    sizeof(views) / sizeof(views[0]), views,
@@ -323,7 +322,7 @@ int main() {
                 cbuf_begin_onetime(cbuf);
 
                 VkClearValue clear_vals[] = {{{{0.0F, 0.0F, 0.0F, 1.0F}}},
-                                             {{{0.0F, 0.0F, 0.0F, 1.0F}}}};
+                                             {{{1.0F}}}};
 
                 VkRenderPassBeginInfo cbuf_rpass_info = {0};
                 cbuf_rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -334,8 +333,6 @@ int main() {
                 cbuf_rpass_info.clearValueCount = sizeof(clear_vals) / sizeof(clear_vals[0]);
                 cbuf_rpass_info.pClearValues = clear_vals;
                 vkCmdBeginRenderPass(cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
-
-                //vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, fullscreen_pipe);
 
                 VkViewport viewport = {0};
                 viewport.width = swapchain.width;
@@ -371,7 +368,6 @@ int main() {
 		                   0, sizeof(struct PushConstants), &pushc_data);
 		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_layout,
 					0, 1, &set, 0, NULL);
-                //vkCmdDraw(cbuf, 6, 1, 0, 0);
 
                 vkCmdDraw(cbuf, 36 * uniform_data->box_count, 1, 0, 0);
 
@@ -429,7 +425,6 @@ int main() {
 
         vkDeviceWaitIdle(base.device);
 
-        vkDestroyPipeline(base.device, fullscreen_pipe, NULL);
         vkDestroyPipelineLayout(base.device, pipe_layout, NULL);
 
         vkDestroyPipeline(base.device, boxes_pipe, NULL);
@@ -437,6 +432,7 @@ int main() {
         vkDestroyRenderPass(base.device, rpass, NULL);
 
         swapchain_destroy(base.device, &swapchain);
+	image_destroy(base.device, &depth_image);
 
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 sync_set_destroy(base.device, &sync_sets[i]);

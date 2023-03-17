@@ -20,6 +20,7 @@ layout (std140, set = 0, binding = 0) uniform Uniform {
 struct RayShot {
 	vec3 closest;
 	bool hit;
+	float depth;
 };
 
 layout (location = 0) flat in int obj_idx;
@@ -54,6 +55,7 @@ RayShot raymarch(vec3 ray_origin, vec3 ray_dir) {
 		if (dist < threshold) {
 			RayShot shot;
 			shot.closest = point;
+			shot.depth = depth;
 			shot.hit = true;
 			return shot;
 		}
@@ -62,6 +64,7 @@ RayShot raymarch(vec3 ray_origin, vec3 ray_dir) {
 
 	RayShot shot;
 	shot.hit = false;
+	shot.depth = 999999999;
 	return shot;
 }
 
@@ -87,4 +90,5 @@ void main()
 	} else {
 		out_color = vec4(0, 0, 0, 1);
 	}
+	gl_FragDepth = shot.depth / 1000;
 }
