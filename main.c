@@ -373,7 +373,7 @@ int main() {
                 vkCmdDraw(cbuf, 6, 1, 0, 0);
 
                 vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, boxes_pipe);
-                vkCmdDraw(cbuf, 240, 1, 0, 0);
+                vkCmdDraw(cbuf, 36 * uniform_data->box_count, 1, 0, 0);
 
                 vkCmdEndRenderPass(cbuf);
 

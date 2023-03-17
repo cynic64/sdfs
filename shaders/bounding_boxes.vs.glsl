@@ -17,23 +17,51 @@ layout (std140, set = 0, binding = 0) uniform Uniform {
 	vec4 box_poss[256];
 } uni;
 
-vec2 positions[6] = vec2[](
-        vec2(-0.02, -0.02),
-        vec2(0.02, -0.02),
-        vec2(0.02, 0.02),
-        vec2(-0.02, -0.02),
-        vec2(0.02, 0.02),
-        vec2(-0.02, 0.02)
+vec3 vertices[36] = vec3[](
+    vec3(-1.0f,-1.0f,-1.0f),
+    vec3(-1.0f,-1.0f, 1.0f),
+    vec3(-1.0f, 1.0f, 1.0f),
+    vec3(1.0f, 1.0f,-1.0f),
+    vec3(-1.0f,-1.0f,-1.0f),
+    vec3(-1.0f, 1.0f,-1.0f),
+    vec3(1.0f,-1.0f, 1.0f),
+    vec3(-1.0f,-1.0f,-1.0f),
+    vec3(1.0f,-1.0f,-1.0f),
+    vec3(1.0f, 1.0f,-1.0f),
+    vec3(1.0f,-1.0f,-1.0f),
+    vec3(-1.0f,-1.0f,-1.0f),
+    vec3(-1.0f,-1.0f,-1.0f),
+    vec3(-1.0f, 1.0f, 1.0f),
+    vec3(-1.0f, 1.0f,-1.0f),
+    vec3(1.0f,-1.0f, 1.0f),
+    vec3(-1.0f,-1.0f, 1.0f),
+    vec3(-1.0f,-1.0f,-1.0f),
+    vec3(-1.0f, 1.0f, 1.0f),
+    vec3(-1.0f,-1.0f, 1.0f),
+    vec3(1.0f,-1.0f, 1.0f),
+    vec3(1.0f, 1.0f, 1.0f),
+    vec3(1.0f,-1.0f,-1.0f),
+    vec3(1.0f, 1.0f,-1.0f),
+    vec3(1.0f,-1.0f,-1.0f),
+    vec3(1.0f, 1.0f, 1.0f),
+    vec3(1.0f,-1.0f, 1.0f),
+    vec3(1.0f, 1.0f, 1.0f),
+    vec3(1.0f, 1.0f,-1.0f),
+    vec3(-1.0f, 1.0f,-1.0f),
+    vec3(1.0f, 1.0f, 1.0f),
+    vec3(-1.0f, 1.0f,-1.0f),
+    vec3(-1.0f, 1.0f, 1.0f),
+    vec3(1.0f, 1.0f, 1.0f),
+    vec3(-1.0f, 1.0f, 1.0f),
+    vec3(1.0f,-1.0f, 1.0)
 );
 
-
 void main() {
-        vec2 offset = positions[gl_VertexIndex % 6];
+	int vertex_count = 36;
+        vec3 offset = vertices[gl_VertexIndex % vertex_count];
 
-	vec4 pos_worldspace = vec4(uni.box_poss[gl_VertexIndex / 6].xyz, 1);
+	vec4 pos_worldspace = vec4(uni.box_poss[gl_VertexIndex / vertex_count].xyz + offset * 4, 1);
 	vec4 pos_screenspace = constants.proj * constants.view * pos_worldspace;
-	vec3 thing = pos_screenspace.xyz / pos_screenspace.w;
-	thing.xy += offset;
 
-	gl_Position = vec4(thing, 1);
+	gl_Position = pos_screenspace;
 }
