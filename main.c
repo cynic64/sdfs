@@ -293,7 +293,7 @@ int main() {
                 assert(res == VK_SUCCESS);
 
 		// Update uniform buffer
-		uniform_data->box_count = 40;
+		uniform_data->box_count = MAX_BOX_COUNT;
 
 		srand(0);
 		double elapsed = timer_get_elapsed(&start_time);
