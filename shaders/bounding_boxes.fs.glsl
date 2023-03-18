@@ -79,6 +79,15 @@ float sd_menger(vec3 p) {
 	return res.x;
 }
 
+// Taken from https://iquilezles.org/articles/distfunctions/
+float sd_box_frame(vec3 point, vec3 box_size, float e) {
+	vec3 p = abs(point)-box_size;
+	vec3 q = abs(p+e)-e;
+	return min(min(length(max(vec3(p.x,q.y,q.z),0.0))+min(max(p.x,max(q.y,q.z)),0.0),
+		       length(max(vec3(q.x,p.y,q.z),0.0))+min(max(q.x,max(p.y,q.z)),0.0)),
+		   length(max(vec3(q.x,q.y,p.z),0.0))+min(max(q.x,max(q.y,p.z)),0.0));
+}
+
 float scene_sdf(vec3 point) {
 	float min_dist = 99999999;
 	int type = objects.types[obj_idx];
@@ -89,6 +98,10 @@ float scene_sdf(vec3 point) {
 		dist = sd_box(point - objects.poss[obj_idx].xyz, vec3(objects.sizes[obj_idx]));
 	} else if (type == 2) {
 		dist = sd_menger(point - objects.poss[obj_idx].xyz);
+	} else if (type == 3) {
+		float size = objects.sizes[obj_idx];
+		dist = sd_box_frame(point - objects.poss[obj_idx].xyz, vec3(size),
+				    0.1 * size);
 	} 
 
 	if (dist < min_dist) min_dist = dist;

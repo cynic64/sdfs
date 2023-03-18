@@ -115,7 +115,7 @@ void calc_intersect(struct Uniform* uni,
 	vec3 box_pos = {0, 3, 0};
 	float radius = 2;
 
-	int steps = 2;
+	int steps = 8;
 	float cell_width = (end_x - start_x) / steps;
 	float cell_height = (end_y - start_y) / steps;
 	float cell_depth = (end_z - start_z) / steps;
@@ -140,15 +140,10 @@ void calc_intersect(struct Uniform* uni,
 				glm_vec3_sub(point, sphere_pos, sphere_point);
 				float sphere_dist = sd_sphere(sphere_point, radius);
 
-				printf("Point: %5.2f %5.2f %5.2f\n", point[0], point[1], point[2]);
-				printf("Dist to box: %5.2f\n", box_dist);
-				printf("Dist to sphere: %5.2f\n", sphere_dist);
-				printf("\n");
-
 				if (sphere_dist < margin && box_dist < margin) {
 					point[0] -= 4;
 					memcpy(uni->poss[uni->count], point, sizeof(point));
-					uni->types[4 * uni->count] = 0;
+					uni->types[4 * uni->count] = 3;
 					uni->sizes[4 * uni->count] = cell_width / 2;
 					uni->count++;
 				}
