@@ -21,6 +21,8 @@
 
 #include <assert.h>
 #include <stdlib.h>
+#include <math.h>
+#include <sys/param.h>
 
 const char* DEVICE_EXTS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 const int DEVICE_EXT_CT = 1;
@@ -61,6 +63,8 @@ struct Uniform {
 	vec4 poss[MAX_OBJ_COUNT];
 	// Shader pads everything to 32 bytes, even arrays :(
 	int types[MAX_OBJ_COUNT * 4];
+	// This is half the side length of the bounding box
+	float sizes[MAX_OBJ_COUNT * 4];
 };
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
@@ -73,6 +77,78 @@ void sync_set_destroy(VkDevice device, struct SyncSet* sync_set) {
 	vkDestroyFence(device, sync_set->render_fence, NULL);
 	vkDestroySemaphore(device, sync_set->acquire_sem, NULL);
 	vkDestroySemaphore(device, sync_set->render_sem, NULL);
+}
+
+void abs_vec3(vec3 in, vec3 out) {
+	for (int i = 0; i < 3; i++) {
+		out[i] = in[i] > 0 ? in[i] : -in[i];
+	}
+}
+
+float length(vec3 in) {
+	return sqrtf(in[0]*in[0] + in[1]*in[1] + in[2]*in[2]);
+}
+
+float sd_box(vec3 point, vec3 box_size) {
+	vec3 d;
+	abs_vec3(point, d); // d = abs(point)
+	for (int i = 0; i < 3; i++) {
+		// d -= box_size;
+		d[i] -= box_size[i];
+	}
+	vec3 d_max;
+	for (int i = 0; i < 3; i++) {
+		d_max[i] = d[i] > 0 ? d[i] : 0;
+	}
+	return MIN(MAX(d[0],MAX(d[1],d[2])),0.0) + length(d_max);
+}
+
+float sd_sphere(vec3 point, float radius) {
+	return length(point) - radius;
+}
+
+
+void calc_intersect(struct Uniform* uni) {
+	vec3 sphere_pos = {0, 0, 0};
+	vec3 box_pos = {0, 3, 0};
+	float radius = 2;
+
+	int steps = 8;
+	float cell_size = 0.5;
+	// Length of cell's diagonal
+	float margin = sqrtf(3*cell_size*cell_size*0.25);
+	for (int x = 0; x < steps; x++) {
+		for (int y = 0; y < steps; y++) {
+			for (int z = 0; z < steps; z++) {
+				vec3 point = {x*cell_size - 2 + cell_size/2,
+					      y*cell_size - 2 + cell_size/2,
+					      z*cell_size - 2 + cell_size/2};
+
+				// Point relative to box's position
+				vec3 box_point;
+				glm_vec3_sub(point, box_pos, box_point);
+				float box_dist = sd_box(box_point, (vec3) {2, 2, 2});
+
+				// Point relative to spheres's position
+				vec3 sphere_point;
+				glm_vec3_sub(point, sphere_pos, sphere_point);
+				float sphere_dist = sd_sphere(sphere_point, radius);
+
+				printf("Point: %5.2f %5.2f %5.2f\n", point[0], point[1], point[2]);
+				printf("Dist to box: %5.2f\n", box_dist);
+				printf("Dist to sphere: %5.2f\n", sphere_dist);
+				printf("\n");
+
+				if (sphere_dist < margin && box_dist < margin) {
+					point[0] -= 4;
+					memcpy(uni->poss[uni->count], point, sizeof(point));
+					uni->types[4 * uni->count] = 1;
+					uni->sizes[4 * uni->count] = cell_size / 2;
+					uni->count++;
+				}
+			}
+		}
+	}
 }
 
 int main() {
@@ -302,23 +378,26 @@ int main() {
 		uniform_data->poss[0][1] = 0;
 		uniform_data->poss[0][2] = 0;
 		uniform_data->types[0] = 0;
+		uniform_data->sizes[0] = 2;
 
 		// Cube
 		uniform_data->poss[1][0] = 0;
 		uniform_data->poss[1][1] = 3;
 		uniform_data->poss[1][2] = 0;
 		uniform_data->types[4 * 1] = 1;
+		uniform_data->sizes[4 * 1] = 2;
 
 		// Fractal
 		uniform_data->poss[2][0] = 6;
 		uniform_data->poss[2][1] = 0;
 		uniform_data->poss[2][2] = 0;
 		uniform_data->types[4 * 2] = 2;
+		uniform_data->sizes[4 * 2] = 3;
+
+		calc_intersect(uniform_data);
 
 		buffer_copy(base.queue, cbuf, uniform_buf_staging.handle, uniform_buf.handle,
 			    sizeof(struct Uniform));
-
-		calc_intersect();
 
                 // Reset command buffer
                 vkResetCommandBuffer(cbuf, 0);

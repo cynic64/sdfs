@@ -16,6 +16,7 @@ layout (std140, set = 0, binding = 0) uniform Uniform {
 	int count;
 	vec4 poss[256];
 	int types[256];
+	float sizes[256];
 } objects;
 
 vec3 vertices[36] = vec3[](
@@ -70,7 +71,7 @@ void main() {
         vec3 offset = vertices[gl_VertexIndex % vertex_count];
 	obj_idx = gl_VertexIndex / vertex_count;
 
-	pos_worldspace = objects.poss[obj_idx].xyz + offset * 3;
+	pos_worldspace = objects.poss[obj_idx].xyz + offset * objects.sizes[obj_idx];
 	vec4 pos_screenspace = constants.proj * constants.view * vec4(pos_worldspace, 1);
 
 	gl_Position = pos_screenspace;

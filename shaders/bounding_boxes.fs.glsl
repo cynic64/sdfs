@@ -16,6 +16,7 @@ layout (std140, set = 0, binding = 0) uniform Uniform {
 	int count;
 	vec4 poss[256];
 	int types[256];
+	float sizes[256];
 } objects;
 
 struct RayShot {
@@ -53,7 +54,7 @@ const mat3 ma = mat3( 0.60, 0.00,  0.80,
                       0.00, 1.00,  0.00,
                      -0.80, 0.00,  0.60 );
 float sd_menger(vec3 p) {
-	p /= 3;
+	p /= objects.sizes[obj_idx];
 
 	float d = sd_box(p,vec3(1.0));
 	vec4 res = vec4( d, 1.0, 0.0, 0.0 );
@@ -83,12 +84,12 @@ float scene_sdf(vec3 point) {
 	int type = objects.types[obj_idx];
 	float dist;
 	if (type == 0) {
-		dist = sd_sphere(point - objects.poss[obj_idx].xyz, 2);
+		dist = sd_sphere(point - objects.poss[obj_idx].xyz, objects.sizes[obj_idx]);
 	} else if (type == 1) {
-		dist = sd_box(point - objects.poss[obj_idx].xyz, vec3(2));
-	} else {
+		dist = sd_box(point - objects.poss[obj_idx].xyz, vec3(objects.sizes[obj_idx]));
+	} else if (type == 2) {
 		dist = sd_menger(point - objects.poss[obj_idx].xyz);
-	}
+	} 
 
 	if (dist < min_dist) min_dist = dist;
 
@@ -138,10 +139,10 @@ void main()
 	// Raycast
 	RayShot shot = raymarch(ray_origin, ray_dir);
 	if (shot.hit) {
-		out_color = vec4(calc_normal(shot.closest) * 0.5 + 0.5, 1);
+		out_color = vec4((calc_normal(shot.closest) * 0.5 + 0.5), 1);
+		gl_FragDepth = clamp(shot.depth / 1000, 0, 1);
 	} else {
 		out_color = vec4(vec3(objects.types[obj_idx] * 0.2) + 0.1, 1);
+		gl_FragDepth = 1;
 	}
-
-	gl_FragDepth = clamp(shot.depth / 1000, 0, 1);
 }
