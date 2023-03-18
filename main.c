@@ -100,7 +100,7 @@ float sd_box(vec3 point, vec3 box_size) {
 	for (int i = 0; i < 3; i++) {
 		d_max[i] = d[i] > 0 ? d[i] : 0;
 	}
-	return MIN(MAX(d[0],MAX(d[1],d[2])),0.0) + length(d_max);
+	return fmin(fmax(d[0],fmax(d[1],d[2])),0.0) + length(d_max);
 }
 
 float sd_sphere(vec3 point, float radius) {
@@ -124,11 +124,6 @@ void calc_intersect(struct Uniform* uni,
 			     + cell_height*cell_height*0.25
 			     + cell_depth*cell_depth*0.25);
 
-	if (uni->count >= MAX_OBJ_COUNT - 1) {
-		printf("Object limit reached! Can't add more.\n");
-		return;
-	}
-
 	for (int x = 0; x < steps; x++) {
 		for (int y = 0; y < steps; y++) {
 			for (int z = 0; z < steps; z++) {
@@ -146,8 +141,9 @@ void calc_intersect(struct Uniform* uni,
 				glm_vec3_sub(point, sphere_pos, sphere_point);
 				float sphere_dist = sd_sphere(sphere_point, radius);
 
-				if (sphere_dist < margin && box_dist < margin) {
-					if (cell_width > 0.4) {
+				float max_dist = fmax(sphere_dist, box_dist);
+				if (max_dist < margin) {
+					if (cell_width > 0.2) {
 						calc_intersect(uni,
 							    start_x + x*cell_width,
 							    start_y + y*cell_height,
@@ -155,7 +151,7 @@ void calc_intersect(struct Uniform* uni,
 							    start_x + (x+1)*cell_width,
 							    start_y + (y+1)*cell_height,
 							    start_z + (z+1)*cell_depth);
-					} else {
+					} else if (uni->count < MAX_OBJ_COUNT) {
 						point[0] -= 4;
 						memcpy(uni->poss[uni->count], point, sizeof(point));
 						uni->types[4 * uni->count] = 3;
@@ -295,6 +291,7 @@ int main() {
         int frame_ct = 0;
         struct timespec start_time = timer_start();
         struct timespec last_frame_time = timer_start();
+	double total_collision_time = 0;
 
         while (!glfwWindowShouldClose(window)) {
                 while (must_recreate) {
@@ -411,7 +408,9 @@ int main() {
 		uniform_data->types[4 * 2] = 2;
 		uniform_data->sizes[4 * 2] = 3;
 
+		struct timespec collision_start_time = timer_start();
 		calc_intersect(uniform_data, -2, -2, -2, 2, 2, 2);
+		total_collision_time += timer_get_elapsed(&collision_start_time);
 
 		buffer_copy(base.queue, cbuf, uniform_buf_staging.handle, uniform_buf.handle,
 			    sizeof(struct Uniform));
@@ -532,6 +531,7 @@ int main() {
 	double elapsed = timer_get_elapsed(&start_time);
         double fps = (double) frame_ct / elapsed;
         printf("FPS: %.2f\n", fps);
+        printf("Average collision time: %.2f\n", total_collision_time / frame_ct * 1000);
 
         vkDeviceWaitIdle(base.device);
 
