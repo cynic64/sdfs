@@ -58,9 +58,10 @@ vec3 vertices[36] = vec3[](
 );
 
 layout (location = 0) out int obj_idx;
-// Originally I calculated the ray direction in the vertex shader, but that doesn't get interpolate
-// correctly. Instead we output worldspace coordinates and let the fragment shader calculate the ray
-// direction.
+
+// Originally I calculated the ray direction in the vertex shader, but that doesn't get interpolated
+// correctly. Instead we output worldspace coordinates (which get interpolated correctly) and let
+// the fragment shader calculate the ray direction.
 layout (location = 1) out vec3 pos_worldspace;
 
 void main() {

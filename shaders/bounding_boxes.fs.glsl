@@ -40,14 +40,54 @@ float sd_sphere(vec3 point, float radius) {
 	return length(point) - radius;
 }
 
+float sd_cross(vec3 point) {
+	float inf = 1.0 / 0.0;
+	float a = sd_box(point, vec3(inf, 1, 1));
+	float b = sd_box(point, vec3(1, inf, 1));
+	float c = sd_box(point, vec3(1, 1, inf));
+	return min(a, min(b, c));
+}
+
+// From https://www.shadertoy.com/view/4sX3Rn
+const mat3 ma = mat3( 0.60, 0.00,  0.80,
+                      0.00, 1.00,  0.00,
+                     -0.80, 0.00,  0.60 );
+float sd_menger(vec3 p) {
+	p /= 3;
+
+	float d = sd_box(p,vec3(1.0));
+	vec4 res = vec4( d, 1.0, 0.0, 0.0 );
+
+	float s = 1.0;
+	for( int m=0; m<5; m++ )
+	{
+		vec3 a = mod( p*s, 2.0 )-1.0;
+		s *= 3.0;
+		vec3 r = abs(1.0 - 3.0*abs(a));
+		float da = max(r.x,r.y);
+		float db = max(r.y,r.z);
+		float dc = max(r.z,r.x);
+		float c = (min(da,min(db,dc))-1.0)/s;
+
+		if( c>d ) {
+			d = c;
+			res = vec4( d, min(res.y,0.2*da*db*dc), (1.0+float(m))/4.0, 0.0 );
+		}
+	}
+
+	return res.x;
+}
+
 float scene_sdf(vec3 point) {
 	float min_dist = 99999999;
 	int type = objects.types[obj_idx];
 	float dist;
 	if (type == 0) {
 		dist = sd_sphere(point - objects.poss[obj_idx].xyz, 2);
-	} else {
+	} else if (type == 1) {
 		dist = sd_box(point - objects.poss[obj_idx].xyz, vec3(2));
+	} else {
+		dist = sd_menger(point - objects.poss[obj_idx].xyz);
 	}
 
 	if (dist < min_dist) min_dist = dist;
@@ -104,5 +144,4 @@ void main()
 	}
 
 	gl_FragDepth = clamp(shot.depth / 1000, 0, 1);
-	//out_color = vec4(vec3(obj_idx * 0.25 + 0.5), 1);
 }
