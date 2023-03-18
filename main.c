@@ -109,9 +109,9 @@ float sd_sphere(vec3 point, float radius) {
 
 
 int calc_intersect(struct Uniform* uni,
+		   vec3 sphere_pos,
 		   float start_x, float start_y, float start_z,
 		   float end_x, float end_y, float end_z, int depth) {
-	vec3 sphere_pos = {0, 0, 0};
 	vec3 box_pos = {0, 3, 0};
 	float radius = 2;
 
@@ -150,6 +150,7 @@ int calc_intersect(struct Uniform* uni,
 					if (depth < 5) {
 						iter_count +=
 							calc_intersect(uni,
+								       sphere_pos,
 								       start_x + x*cell_width,
 								       start_y + y*cell_height,
 								       start_z + z*cell_depth,
@@ -214,6 +215,29 @@ int main() {
 	VkResult res = vkMapMemory(base.device, uniform_buf_staging.mem, 0, sizeof(struct Uniform),
 				   0, (void **) &uniform_data);
 	assert(res == VK_SUCCESS);
+
+	// Write to uniform buffer
+	uniform_data->count = 3;
+	// Sphere
+	uniform_data->poss[0][0] = 0;
+	uniform_data->poss[0][1] = 0;
+	uniform_data->poss[0][2] = 0;
+	uniform_data->types[0] = 0;
+	uniform_data->sizes[0] = 2;
+
+	// Cube
+	uniform_data->poss[1][0] = 0;
+	uniform_data->poss[1][1] = 3;
+	uniform_data->poss[1][2] = 0;
+	uniform_data->types[4 * 1] = 1;
+	uniform_data->sizes[4 * 1] = 2;
+
+	// Fractal
+	uniform_data->poss[2][0] = 6;
+	uniform_data->poss[2][1] = 0;
+	uniform_data->poss[2][2] = 0;
+	uniform_data->types[4 * 2] = 2;
+	uniform_data->sizes[4 * 2] = 3;
 
 	// Create descriptor set
 	struct DescriptorInfo uniform_desc = {0};
@@ -379,6 +403,25 @@ int main() {
 			cam_movement[0] += MOVEMENT_SPEED * speed_multiplier;
 		} 
 
+		if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
+			uniform_data->poss[0][0] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
+		} 
+		if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
+			uniform_data->poss[0][0] += MOVEMENT_SPEED * speed_multiplier * 0.1;
+		} 
+		if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
+			uniform_data->poss[0][1] += MOVEMENT_SPEED * speed_multiplier * 0.1;
+		} 
+		if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
+			uniform_data->poss[0][1] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
+		} 
+		if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
+			uniform_data->poss[0][2] += MOVEMENT_SPEED * speed_multiplier * 0.1;
+		} 
+		if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
+			uniform_data->poss[0][2] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
+		} 
+
         	// Update camera
         	camera_fly_update(&camera,
                                   d_mouse_x * MOUSE_SENSITIVITY_FACTOR,
@@ -395,31 +438,10 @@ int main() {
                 res = vkWaitForFences(base.device, 1, &sync_set->render_fence, VK_TRUE, UINT64_MAX);
                 assert(res == VK_SUCCESS);
 
-		// Update uniform buffer
-		uniform_data->count = 3;
-		// Sphere
-		uniform_data->poss[0][0] = 0;
-		uniform_data->poss[0][1] = 0;
-		uniform_data->poss[0][2] = 0;
-		uniform_data->types[0] = 0;
-		uniform_data->sizes[0] = 2;
-
-		// Cube
-		uniform_data->poss[1][0] = 0;
-		uniform_data->poss[1][1] = 3;
-		uniform_data->poss[1][2] = 0;
-		uniform_data->types[4 * 1] = 1;
-		uniform_data->sizes[4 * 1] = 2;
-
-		// Fractal
-		uniform_data->poss[2][0] = 6;
-		uniform_data->poss[2][1] = 0;
-		uniform_data->poss[2][2] = 0;
-		uniform_data->types[4 * 2] = 2;
-		uniform_data->sizes[4 * 2] = 3;
-
 		struct timespec collision_start_time = timer_start();
-		int iter_count = calc_intersect(uniform_data, -2, -2, -2, 2, 2, 2, 0);
+		uniform_data->count = 3;
+		int iter_count = calc_intersect(uniform_data, uniform_data->poss[0],
+						-2, -2, -2, 2, 2, 2, 0);
 		printf("Collision calc took %d iterations (brute force would be around %d)\n",
 		       iter_count, (int) (1.14 * pow(8, 6)));
 		total_collision_time += timer_get_elapsed(&collision_start_time);
