@@ -56,7 +56,7 @@ struct PushConstants {
 	mat4 proj;
 };
 
-#define MAX_OBJ_COUNT 256
+#define MAX_OBJ_COUNT 1024
 
 struct Uniform {
 	int count;
@@ -115,7 +115,7 @@ void calc_intersect(struct Uniform* uni,
 	vec3 box_pos = {0, 3, 0};
 	float radius = 2;
 
-	int steps = 8;
+	int steps = 2;
 	float cell_width = (end_x - start_x) / steps;
 	float cell_height = (end_y - start_y) / steps;
 	float cell_depth = (end_z - start_z) / steps;
@@ -123,6 +123,12 @@ void calc_intersect(struct Uniform* uni,
 	float margin = sqrtf(cell_width*cell_width*0.25
 			     + cell_height*cell_height*0.25
 			     + cell_depth*cell_depth*0.25);
+
+	if (uni->count >= MAX_OBJ_COUNT - 1) {
+		printf("Object limit reached! Can't add more.\n");
+		return;
+	}
+
 	for (int x = 0; x < steps; x++) {
 		for (int y = 0; y < steps; y++) {
 			for (int z = 0; z < steps; z++) {
@@ -141,11 +147,21 @@ void calc_intersect(struct Uniform* uni,
 				float sphere_dist = sd_sphere(sphere_point, radius);
 
 				if (sphere_dist < margin && box_dist < margin) {
-					point[0] -= 4;
-					memcpy(uni->poss[uni->count], point, sizeof(point));
-					uni->types[4 * uni->count] = 3;
-					uni->sizes[4 * uni->count] = cell_width / 2;
-					uni->count++;
+					if (cell_width > 0.4) {
+						calc_intersect(uni,
+							    start_x + x*cell_width,
+							    start_y + y*cell_height,
+							    start_z + z*cell_depth,
+							    start_x + (x+1)*cell_width,
+							    start_y + (y+1)*cell_height,
+							    start_z + (z+1)*cell_depth);
+					} else {
+						point[0] -= 4;
+						memcpy(uni->poss[uni->count], point, sizeof(point));
+						uni->types[4 * uni->count] = 3;
+						uni->sizes[4 * uni->count] = cell_width / 2;
+						uni->count++;
+					}
 				}
 			}
 		}

@@ -14,9 +14,9 @@ layout (push_constant, std140) uniform PushConstants {
 
 layout (std140, set = 0, binding = 0) uniform Uniform {
 	int count;
-	vec4 poss[256];
-	int types[256];
-	float sizes[256];
+	vec4 poss[1024];
+	int types[1024];
+	float sizes[1024];
 } objects;
 
 vec3 vertices[36] = vec3[](
