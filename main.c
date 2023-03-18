@@ -108,9 +108,9 @@ float sd_sphere(vec3 point, float radius) {
 }
 
 
-void calc_intersect(struct Uniform* uni,
-		    float start_x, float start_y, float start_z,
-		    float end_x, float end_y, float end_z) {
+int calc_intersect(struct Uniform* uni,
+		   float start_x, float start_y, float start_z,
+		   float end_x, float end_y, float end_z, int depth) {
 	vec3 sphere_pos = {0, 0, 0};
 	vec3 box_pos = {0, 3, 0};
 	float radius = 2;
@@ -123,6 +123,8 @@ void calc_intersect(struct Uniform* uni,
 	float margin = sqrtf(cell_width*cell_width*0.25
 			     + cell_height*cell_height*0.25
 			     + cell_depth*cell_depth*0.25);
+
+	int iter_count = 0;
 
 	for (int x = 0; x < steps; x++) {
 		for (int y = 0; y < steps; y++) {
@@ -142,15 +144,19 @@ void calc_intersect(struct Uniform* uni,
 				float sphere_dist = sd_sphere(sphere_point, radius);
 
 				float max_dist = fmax(sphere_dist, box_dist);
-				if (max_dist < margin) {
-					if (cell_width > 0.2) {
-						calc_intersect(uni,
-							    start_x + x*cell_width,
-							    start_y + y*cell_height,
-							    start_z + z*cell_depth,
-							    start_x + (x+1)*cell_width,
-							    start_y + (y+1)*cell_height,
-							    start_z + (z+1)*cell_depth);
+				float min_dist = fmin(sphere_dist, box_dist);
+				
+				if (max_dist < margin && -min_dist < margin) {
+					if (depth < 5) {
+						iter_count +=
+							calc_intersect(uni,
+								       start_x + x*cell_width,
+								       start_y + y*cell_height,
+								       start_z + z*cell_depth,
+								       start_x + (x+1)*cell_width,
+								       start_y + (y+1)*cell_height,
+								       start_z + (z+1)*cell_depth,
+								       depth + 1);
 					} else if (uni->count < MAX_OBJ_COUNT) {
 						point[0] -= 4;
 						memcpy(uni->poss[uni->count], point, sizeof(point));
@@ -159,9 +165,13 @@ void calc_intersect(struct Uniform* uni,
 						uni->count++;
 					}
 				}
+
+				iter_count++;
 			}
 		}
 	}
+
+	return iter_count;
 }
 
 int main() {
@@ -319,8 +329,8 @@ int main() {
 			}
 			// Now actually recreate it
 			image_create_depth(base.phys_dev, base.device, DEPTH_FORMAT,
-					    swapchain.width, swapchain.height,
-					    VK_SAMPLE_COUNT_1_BIT, &depth_image);
+					   swapchain.width, swapchain.height,
+					   VK_SAMPLE_COUNT_1_BIT, &depth_image);
 
 			// Recreate framebuffers
                         for (int i = 0; i < swapchain.image_ct; i++) {
@@ -360,13 +370,13 @@ int main() {
 			cam_movement[2] += MOVEMENT_SPEED * speed_multiplier;
         	}
 		if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-			  cam_movement[2] -= MOVEMENT_SPEED * speed_multiplier;
+			cam_movement[2] -= MOVEMENT_SPEED * speed_multiplier;
         	}
 		if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-			  cam_movement[0] -= MOVEMENT_SPEED * speed_multiplier;
+			cam_movement[0] -= MOVEMENT_SPEED * speed_multiplier;
         	}
 		if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-			  cam_movement[0] += MOVEMENT_SPEED * speed_multiplier;
+			cam_movement[0] += MOVEMENT_SPEED * speed_multiplier;
 		} 
 
         	// Update camera
@@ -409,7 +419,9 @@ int main() {
 		uniform_data->sizes[4 * 2] = 3;
 
 		struct timespec collision_start_time = timer_start();
-		calc_intersect(uniform_data, -2, -2, -2, 2, 2, 2);
+		int iter_count = calc_intersect(uniform_data, -2, -2, -2, 2, 2, 2, 0);
+		printf("Collision calc took %d iterations (brute force would be around %d)\n",
+		       iter_count, (int) (1.14 * pow(8, 6)));
 		total_collision_time += timer_get_elapsed(&collision_start_time);
 
 		buffer_copy(base.queue, cbuf, uniform_buf_staging.handle, uniform_buf.handle,
@@ -531,7 +543,7 @@ int main() {
 	double elapsed = timer_get_elapsed(&start_time);
         double fps = (double) frame_ct / elapsed;
         printf("FPS: %.2f\n", fps);
-        printf("Average collision time: %.2f\n", total_collision_time / frame_ct * 1000);
+        printf("Average collision time: %.2f ms\n", total_collision_time / frame_ct * 1000);
 
         vkDeviceWaitIdle(base.device);
 
