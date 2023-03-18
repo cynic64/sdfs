@@ -22,11 +22,12 @@ struct RayShot {
 	vec3 closest;
 	bool hit;
 	float depth;
+	int steps;
 };
 
 layout (location = 0) flat in int obj_idx;
 // Should be normalized
-layout (location = 1) in vec3 ray_dir;
+layout (location = 1) in vec3 pos_worldspace;
 
 layout (location = 0) out vec4 out_color;
 
@@ -65,6 +66,7 @@ RayShot raymarch(vec3 ray_origin, vec3 ray_dir) {
 			shot.closest = point;
 			shot.depth = depth;
 			shot.hit = true;
+			shot.steps = i;
 			return shot;
 		}
 		depth += dist;
@@ -73,6 +75,7 @@ RayShot raymarch(vec3 ray_origin, vec3 ray_dir) {
 	RayShot shot;
 	shot.hit = false;
 	shot.depth = 999999999;
+	shot.steps = 128;
 	return shot;
 }
 
@@ -90,13 +93,16 @@ vec3 calc_normal(in vec3 point) {
 void main()
 {
 	vec3 ray_origin = constants.eye.xyz;
+	vec3 ray_dir = normalize(pos_worldspace - ray_origin);
 
 	// Raycast
 	RayShot shot = raymarch(ray_origin, ray_dir);
 	if (shot.hit) {
 		out_color = vec4(calc_normal(shot.closest) * 0.5 + 0.5, 1);
 	} else {
-		out_color = vec4(0, 0, 0, 1);
+		out_color = vec4(vec3(objects.types[obj_idx] * 0.2) + 0.1, 1);
 	}
-	gl_FragDepth = shot.depth / 1000;
+
+	gl_FragDepth = clamp(shot.depth / 1000, 0, 1);
+	//out_color = vec4(vec3(obj_idx * 0.25 + 0.5), 1);
 }

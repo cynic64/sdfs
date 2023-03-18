@@ -193,7 +193,7 @@ int main() {
 	struct CameraFly camera;
 	camera.pitch = 0.0F;
 	camera.yaw = 0.0F;
-	camera.eye[0] = 0.0F; camera.eye[1] = 0.0F; camera.eye[2] = -100.0F; 
+	camera.eye[0] = 0.0F; camera.eye[1] = 0.0F; camera.eye[2] = -10.0F; 
 	double last_mouse_x, last_mouse_y;
 	glfwGetCursorPos(window, &last_mouse_x, &last_mouse_y);
 
@@ -295,17 +295,18 @@ int main() {
                 assert(res == VK_SUCCESS);
 
 		// Update uniform buffer
-		uniform_data->count = MAX_OBJ_COUNT;
+		uniform_data->count = 2;
+		// Sphere
+		uniform_data->poss[0][0] = 0;
+		uniform_data->poss[0][1] = 0;
+		uniform_data->poss[0][2] = 0;
+		uniform_data->types[0] = 0;
 
-		srand(0);
-		double elapsed = timer_get_elapsed(&start_time);
-		for (int i = 0; i < MAX_OBJ_COUNT; i++) {
-			uniform_data->poss[i][0] = rand() % 64 * sin(elapsed);
-			uniform_data->poss[i][1] = rand() % 64 * cos(elapsed);
-			uniform_data->poss[i][2] = rand() % 64 * sin(elapsed + 3.14159265);
-
-			uniform_data->types[4 * i] = i % 2;
-		};
+		// Cube
+		uniform_data->poss[1][0] = 0;
+		uniform_data->poss[1][1] = 3;
+		uniform_data->poss[1][2] = 0;
+		uniform_data->types[4] = 1;
 
 		buffer_copy(base.queue, cbuf, uniform_buf_staging.handle, uniform_buf.handle,
 			    sizeof(struct Uniform));

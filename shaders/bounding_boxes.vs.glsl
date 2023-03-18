@@ -58,7 +58,10 @@ vec3 vertices[36] = vec3[](
 );
 
 layout (location = 0) out int obj_idx;
-layout (location = 1) out vec3 ray_dir;
+// Originally I calculated the ray direction in the vertex shader, but that doesn't get interpolate
+// correctly. Instead we output worldspace coordinates and let the fragment shader calculate the ray
+// direction.
+layout (location = 1) out vec3 pos_worldspace;
 
 void main() {
 	// Figure out where it goes on screen
@@ -66,13 +69,8 @@ void main() {
         vec3 offset = vertices[gl_VertexIndex % vertex_count];
 	obj_idx = gl_VertexIndex / vertex_count;
 
-	vec4 pos_worldspace = vec4(objects.poss[obj_idx].xyz + offset * 2, 1);
-	vec4 pos_screenspace = constants.proj * constants.view * pos_worldspace;
+	pos_worldspace = objects.poss[obj_idx].xyz + offset * 3;
+	vec4 pos_screenspace = constants.proj * constants.view * vec4(pos_worldspace, 1);
 
 	gl_Position = pos_screenspace;
-
-	// Figure out where the ray goes in world space
-	mat4 camera = constants.proj * constants.view;
-	mat4 inv = inverse(camera);
-	ray_dir = normalize((inv * vec4(pos_screenspace.xy / pos_screenspace.w, 1.0, 1.0)).xyz);
 }
