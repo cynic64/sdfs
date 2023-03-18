@@ -13,9 +13,10 @@ layout (push_constant, std140) uniform PushConstants {
 } constants;
 
 layout (std140, set = 0, binding = 0) uniform Uniform {
-	int box_count;
-	vec4 box_poss[256];
-} uni;
+	int count;
+	vec4 poss[256];
+	int types[256];
+} objects;
 
 struct RayShot {
 	vec3 closest;
@@ -40,7 +41,14 @@ float sd_sphere(vec3 point, float radius) {
 
 float scene_sdf(vec3 point) {
 	float min_dist = 99999999;
-	float dist = sd_sphere(point - uni.box_poss[obj_idx].xyz, 4);
+	int type = objects.types[obj_idx];
+	float dist;
+	if (type == 0) {
+		dist = sd_sphere(point - objects.poss[obj_idx].xyz, 2);
+	} else {
+		dist = sd_box(point - objects.poss[obj_idx].xyz, vec3(2));
+	}
+
 	if (dist < min_dist) min_dist = dist;
 
 	return min_dist;

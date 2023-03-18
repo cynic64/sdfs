@@ -54,11 +54,13 @@ struct PushConstants {
 	mat4 proj;
 };
 
-#define MAX_BOX_COUNT 256
+#define MAX_OBJ_COUNT 256
 
 struct Uniform {
-	int box_count;
-	vec4 box_poss[MAX_BOX_COUNT];
+	int count;
+	vec4 poss[MAX_OBJ_COUNT];
+	// Shader pads everything to 32 bytes, even arrays :(
+	int types[MAX_OBJ_COUNT * 4];
 };
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
@@ -293,14 +295,16 @@ int main() {
                 assert(res == VK_SUCCESS);
 
 		// Update uniform buffer
-		uniform_data->box_count = MAX_BOX_COUNT;
+		uniform_data->count = MAX_OBJ_COUNT;
 
 		srand(0);
 		double elapsed = timer_get_elapsed(&start_time);
-		for (int i = 0; i < MAX_BOX_COUNT; i++) {
-			uniform_data->box_poss[i][0] = rand() % 64 * sin(elapsed);
-			uniform_data->box_poss[i][1] = rand() % 64 * cos(elapsed);
-			uniform_data->box_poss[i][2] = rand() % 64 * sin(elapsed + 3.14159265);
+		for (int i = 0; i < MAX_OBJ_COUNT; i++) {
+			uniform_data->poss[i][0] = rand() % 64 * sin(elapsed);
+			uniform_data->poss[i][1] = rand() % 64 * cos(elapsed);
+			uniform_data->poss[i][2] = rand() % 64 * sin(elapsed + 3.14159265);
+
+			uniform_data->types[4 * i] = i % 2;
 		};
 
 		buffer_copy(base.queue, cbuf, uniform_buf_staging.handle, uniform_buf.handle,
@@ -369,7 +373,7 @@ int main() {
 		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_layout,
 					0, 1, &set, 0, NULL);
 
-                vkCmdDraw(cbuf, 36 * uniform_data->box_count, 1, 0, 0);
+                vkCmdDraw(cbuf, 36 * uniform_data->count, 1, 0, 0);
 
                 vkCmdEndRenderPass(cbuf);
 
