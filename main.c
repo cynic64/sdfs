@@ -161,6 +161,7 @@ int main() {
 	pipe_settings.depth.depthTestEnable = VK_TRUE;
 	pipe_settings.depth.depthWriteEnable = VK_TRUE;
 	pipe_settings.depth.depthCompareOp = VK_COMPARE_OP_LESS;
+	pipe_settings.rasterizer.cullMode = VK_CULL_MODE_NONE;
 
 	VkPipeline boxes_pipe;
 	pipeline_create(base.device, &pipe_settings,
@@ -295,7 +296,7 @@ int main() {
                 assert(res == VK_SUCCESS);
 
 		// Update uniform buffer
-		uniform_data->count = 2;
+		uniform_data->count = 3;
 		// Sphere
 		uniform_data->poss[0][0] = 0;
 		uniform_data->poss[0][1] = 0;
@@ -306,10 +307,18 @@ int main() {
 		uniform_data->poss[1][0] = 0;
 		uniform_data->poss[1][1] = 3;
 		uniform_data->poss[1][2] = 0;
-		uniform_data->types[4] = 1;
+		uniform_data->types[4 * 1] = 1;
+
+		// Fractal
+		uniform_data->poss[2][0] = 6;
+		uniform_data->poss[2][1] = 0;
+		uniform_data->poss[2][2] = 0;
+		uniform_data->types[4 * 2] = 2;
 
 		buffer_copy(base.queue, cbuf, uniform_buf_staging.handle, uniform_buf.handle,
 			    sizeof(struct Uniform));
+
+		calc_intersect();
 
                 // Reset command buffer
                 vkResetCommandBuffer(cbuf, 0);
