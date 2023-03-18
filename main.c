@@ -108,21 +108,27 @@ float sd_sphere(vec3 point, float radius) {
 }
 
 
-void calc_intersect(struct Uniform* uni) {
+void calc_intersect(struct Uniform* uni,
+		    float start_x, float start_y, float start_z,
+		    float end_x, float end_y, float end_z) {
 	vec3 sphere_pos = {0, 0, 0};
 	vec3 box_pos = {0, 3, 0};
 	float radius = 2;
 
-	int steps = 8;
-	float cell_size = 0.5;
+	int steps = 2;
+	float cell_width = (end_x - start_x) / steps;
+	float cell_height = (end_y - start_y) / steps;
+	float cell_depth = (end_z - start_z) / steps;
 	// Length of cell's diagonal
-	float margin = sqrtf(3*cell_size*cell_size*0.25);
+	float margin = sqrtf(cell_width*cell_width*0.25
+			     + cell_height*cell_height*0.25
+			     + cell_depth*cell_depth*0.25);
 	for (int x = 0; x < steps; x++) {
 		for (int y = 0; y < steps; y++) {
 			for (int z = 0; z < steps; z++) {
-				vec3 point = {x*cell_size - 2 + cell_size/2,
-					      y*cell_size - 2 + cell_size/2,
-					      z*cell_size - 2 + cell_size/2};
+				vec3 point = {start_x + (x + 0.5)*cell_width,
+				              start_y + (y + 0.5)*cell_height,
+				              start_z + (z + 0.5)*cell_depth};
 
 				// Point relative to box's position
 				vec3 box_point;
@@ -142,8 +148,8 @@ void calc_intersect(struct Uniform* uni) {
 				if (sphere_dist < margin && box_dist < margin) {
 					point[0] -= 4;
 					memcpy(uni->poss[uni->count], point, sizeof(point));
-					uni->types[4 * uni->count] = 1;
-					uni->sizes[4 * uni->count] = cell_size / 2;
+					uni->types[4 * uni->count] = 0;
+					uni->sizes[4 * uni->count] = cell_width / 2;
 					uni->count++;
 				}
 			}
@@ -394,7 +400,7 @@ int main() {
 		uniform_data->types[4 * 2] = 2;
 		uniform_data->sizes[4 * 2] = 3;
 
-		calc_intersect(uniform_data);
+		calc_intersect(uniform_data, -2, -2, -2, 2, 2, 2);
 
 		buffer_copy(base.queue, cbuf, uniform_buf_staging.handle, uniform_buf.handle,
 			    sizeof(struct Uniform));
