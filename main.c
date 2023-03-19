@@ -180,11 +180,13 @@ int calc_intersect(struct Uniform* uni,
 								       depth + 1);
 					} else if (uni->count < MAX_OBJ_COUNT) {
 						point[0] -= 4;
-						glm_scale_make(uni->transforms[uni->count],
-							       (vec3) {cell_width,
-								       cell_width,
-								       cell_width});
-						glm_translate(uni->transforms[uni->count], point);
+						/*
+						glm_translate_make(uni->transforms[uni->count], point);
+						*/
+						glm_scale(uni->transforms[uni->count],
+							  (vec3) {cell_width,
+								  cell_height,
+								  cell_depth});
 						uni->types[4 * uni->count] = 3;
 						uni->count++;
 					}
@@ -245,15 +247,15 @@ int main() {
 	uniform_data->count = 4;
 	// Sphere
 	uniform_data->types[4 * 0] = 0;
-	glm_translate_make(uniform_data->transforms[0], (vec3) {0, -6, 0});
-	glm_scale(uniform_data->transforms[0], (vec3) {2, 2, 2});
+	glm_translate_make(uniform_data->transforms[0], (vec3) {0, 0, 0});
+	glm_scale(uniform_data->transforms[0], (vec3) {0.7, 0.7, 0.7});
 
 	// Cube
 	uniform_data->types[4 * 1] = 1;
 	// Note that these happen in the reverse order, the scale is done first. Don't know why,
 	// something complicated and mathematical.
 	glm_translate_make(uniform_data->transforms[1], (vec3) {0, 3, 0});
-	glm_scale(uniform_data->transforms[1], (vec3) {2, 2, 2});
+	glm_scale(uniform_data->transforms[1], (vec3) {0.7, 0.7, 0.7});
 
 	// Fractal
 	uniform_data->types[4 * 2] = 2;
@@ -470,10 +472,8 @@ int main() {
 
 		struct timespec collision_start_time = timer_start();
 		uniform_data->count = 4;
-		/*
 		int iter_count = calc_intersect(uniform_data, (vec3) {0, 0, 0},
 						-2, -2, -2, 2, 2, 2, 0);
-		*/
 		/*
 		printf("Collision calc took %d iterations (brute force would be around %d)\n",
 		       iter_count, (int) (1.14 * pow(8, 6)));

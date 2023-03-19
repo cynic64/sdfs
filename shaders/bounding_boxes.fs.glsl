@@ -88,10 +88,19 @@ float sd_box_frame(vec3 point, vec3 box_size, float e) {
 // Taken from same page ^
 float sd_cone(vec3 p, vec2 c, float h) {
 	p.y -= h / 2;
-	// c is cos(angle), sin(angle)
+	// c is sin(angle), cos(angle)
 
-	float q = length(p.xz);
-	return max(dot(c.xy,vec2(q,p.y)),-h-p.y);
+	// Alternatively pass q instead of (c,h),
+	// which is the point at the base in 2D
+	vec2 q = h*vec2(c.x/c.y,-1.0);
+    
+	vec2 w = vec2( length(p.xz), p.y );
+	vec2 a = w - q*clamp( dot(w,q)/dot(q,q), 0.0, 1.0 );
+	vec2 b = w - q*vec2( clamp( w.x/q.x, 0.0, 1.0 ), 1.0 );
+	float k = sign( q.y );
+	float d = min(dot( a, a ),dot(b, b));
+	float s = max( k*(w.x*q.y-w.y*q.x),k*(w.y-q.y)  );
+	return sqrt(d)*sign(s);
 }
 
 float scene_sdf(vec3 point) {
@@ -108,7 +117,7 @@ float scene_sdf(vec3 point) {
 	} else if (type == 3) {
 		dist = sd_box_frame(point_rel, vec3(1), 0.1);
 	} else if (type == 4) {
-		dist = sd_cone(point_rel, vec2(0.940, 0.342), 2);
+		dist = sd_cone(point_rel, vec2(0.342, 0.940), 2);
 	}
 
 	if (dist < min_dist) min_dist = dist;
@@ -116,9 +125,9 @@ float scene_sdf(vec3 point) {
 	return min_dist;
 }
 
-RayShot raymarch(vec3 ray_origin, vec3 ray_dir) {
+RayShot raymarch(vec3 ray_origin, vec3 ray_dir, float initial_depth) {
 	float threshold = 0.005;
-	float depth = 0;
+	float depth = initial_depth;
 	for (int i = 0; i < 128; i++) {
 		vec3 point = ray_origin + ray_dir * depth;
 		float dist = scene_sdf(point);
@@ -157,7 +166,7 @@ void main()
 	vec3 ray_dir = normalize(pos_worldspace - ray_origin);
 
 	// Raycast
-	RayShot shot = raymarch(ray_origin, ray_dir);
+	RayShot shot = raymarch(ray_origin, ray_dir, length(pos_worldspace - ray_origin));
 	if (shot.hit) {
 		out_color = vec4((calc_normal(shot.closest) * 0.5 + 0.5), 1);
 		gl_FragDepth = clamp(shot.depth / 1000, 0, 1);
@@ -166,4 +175,5 @@ void main()
 		gl_FragDepth = 1;
 	}
 	//out_color = vec4(vec3(objects.types[obj_idx] * 0.2) + 0.1, 1);
+	//out_color = vec4((inverse(objects.transforms[obj_idx]) * vec4(pos_worldspace, 1)).xyz * 0.5 + 0.5, 1);
 }
