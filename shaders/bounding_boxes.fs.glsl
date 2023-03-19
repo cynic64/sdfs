@@ -14,10 +14,10 @@ layout (push_constant, std140) uniform PushConstants {
 
 layout (std140, set = 0, binding = 0) uniform Uniform {
 	int count;
-	vec4 poss[1024];
-	int types[1024];
-	float sizes[1024];
-	mat4 transform;
+	vec4 poss[512];
+	int types[512];
+	float sizes[512];
+	mat4 transforms[512];
 } objects;
 
 struct RayShot {
@@ -104,7 +104,7 @@ float scene_sdf(vec3 point) {
 	int type = objects.types[obj_idx];
 	float size = objects.sizes[obj_idx];
 	vec3 point_rel = point - objects.poss[obj_idx].xyz;
-	point_rel = (inverse(objects.transform) * vec4(point_rel, 1)).xyz;
+	point_rel = (inverse(objects.transforms[obj_idx]) * vec4(point_rel, 1)).xyz;
 	float dist;
 	if (type == 0) {
 		dist = sd_sphere(point_rel, size);

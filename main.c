@@ -1,4 +1,5 @@
 #include "external/cglm/include/cglm/affine.h"
+#include "external/cglm/include/cglm/mat4.h"
 #include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -58,7 +59,7 @@ struct PushConstants {
 	mat4 proj;
 };
 
-#define MAX_OBJ_COUNT 1024
+#define MAX_OBJ_COUNT 512
 
 struct Uniform {
 	int32_t count;
@@ -68,7 +69,7 @@ struct Uniform {
 	// This is half the side length of the bounding box
 	__attribute__((aligned(16))) float sizes[MAX_OBJ_COUNT * 4];
 
-	__attribute__((aligned(16))) mat4 transform;
+	__attribute__((aligned(16))) mat4 transforms[MAX_OBJ_COUNT];
 };
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
@@ -185,7 +186,8 @@ int main() {
 	printf("poss: %lu\n", offsetof(struct Uniform, poss));
 	printf("types: %lu\n", offsetof(struct Uniform, types));
 	printf("sizes: %lu\n", offsetof(struct Uniform, sizes));
-	printf("transform: %lu\n", offsetof(struct Uniform, transform));
+	printf("transforms: %lu\n", offsetof(struct Uniform, transforms));
+	printf("Total size: %lu\n", sizeof(struct Uniform));
 	
         glfwInit();
         glfwSetErrorCallback(glfw_error_callback);
@@ -235,6 +237,7 @@ int main() {
 	uniform_data->poss[0][2] = 0;
 	uniform_data->types[0] = 0;
 	uniform_data->sizes[0] = 2;
+	glm_mat4_identity(uniform_data->transforms[0]);
 
 	// Cube
 	uniform_data->poss[1][0] = 0;
@@ -242,6 +245,7 @@ int main() {
 	uniform_data->poss[1][2] = 0;
 	uniform_data->types[4 * 1] = 1;
 	uniform_data->sizes[4 * 1] = 2;
+	glm_mat4_identity(uniform_data->transforms[1]);
 
 	// Fractal
 	uniform_data->poss[2][0] = 6;
@@ -249,6 +253,7 @@ int main() {
 	uniform_data->poss[2][2] = 0;
 	uniform_data->types[4 * 2] = 2;
 	uniform_data->sizes[4 * 2] = 3;
+	glm_mat4_identity(uniform_data->transforms[2]);
 
 	// Cone
 	uniform_data->poss[3][0] = 12;
@@ -256,9 +261,7 @@ int main() {
 	uniform_data->poss[3][2] = 0;
 	uniform_data->types[4 * 3] = 4;
 	uniform_data->sizes[4 * 3] = 3;
-
-	// Transform
-	glm_rotate_make(uniform_data->transform, 1, (vec3) {1, 1, 0});
+	glm_rotate_make(uniform_data->transforms[3], 1, (vec3) {1, 1, 0});
 
 	// Create descriptor set
 	struct DescriptorInfo uniform_desc = {0};
