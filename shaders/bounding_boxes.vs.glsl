@@ -14,9 +14,7 @@ layout (push_constant, std140) uniform PushConstants {
 
 layout (std140, set = 0, binding = 0) uniform Uniform {
 	int count;
-	vec4 poss[512];
 	int types[512];
-	float sizes[512];
 	mat4 transforms[512];
 } objects;
 
@@ -71,11 +69,9 @@ void main() {
 	int vertex_count = 36;
 	obj_idx = gl_VertexIndex / vertex_count;
 
-        vec3 offset = (objects.transforms[obj_idx]
+        pos_worldspace = (objects.transforms[obj_idx]
 		       * vec4(vertices[gl_VertexIndex % vertex_count], 1)).xyz;
-	offset *= objects.sizes[obj_idx];
 
-	pos_worldspace = objects.poss[obj_idx].xyz + offset;
 	vec4 pos_screenspace = constants.proj * constants.view * vec4(pos_worldspace, 1);
 
 	gl_Position = pos_screenspace;

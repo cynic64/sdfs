@@ -1,5 +1,6 @@
 #include "external/cglm/include/cglm/affine.h"
 #include "external/cglm/include/cglm/mat4.h"
+#include "external/cglm/include/cglm/vec3.h"
 #include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -63,12 +64,11 @@ struct PushConstants {
 
 struct Uniform {
 	int32_t count;
-	__attribute__((aligned(16))) vec4 poss[MAX_OBJ_COUNT];
+
 	// Shader pads everything to 32 bytes, even arrays :(
 	__attribute__((aligned(16))) int32_t types[MAX_OBJ_COUNT * 4];
-	// This is half the side length of the bounding box
-	__attribute__((aligned(16))) float sizes[MAX_OBJ_COUNT * 4];
 
+	// The base box has a side length of 2 (goes from -1 to 1)
 	__attribute__((aligned(16))) mat4 transforms[MAX_OBJ_COUNT];
 };
 
@@ -112,6 +112,21 @@ float sd_sphere(vec3 point, float radius) {
 	return length(point) - radius;
 }
 
+// Creates a rotation matrix that makes (0, 1, 0) point in the direction of `normal`
+void normal_matrix(vec3 normal, mat4 out) {
+	vec3 perp = {-normal[1], normal[0], 0};
+	vec3 perp2;
+	glm_vec3_cross(normal, perp, perp2);
+	glm_vec3_normalize(perp2);
+
+	glm_mat4_identity(out);
+	// This row is where 1 0 0 ends up
+	memcpy(out[0], perp, sizeof(vec3));
+	// This is where 0 1 0 ends up
+	memcpy(out[1], normal, sizeof(vec3));
+	// This is where 0 0 1 ends up
+	memcpy(out[2], perp2, sizeof(vec3));
+}
 
 int calc_intersect(struct Uniform* uni,
 		   vec3 sphere_pos,
@@ -165,9 +180,12 @@ int calc_intersect(struct Uniform* uni,
 								       depth + 1);
 					} else if (uni->count < MAX_OBJ_COUNT) {
 						point[0] -= 4;
-						memcpy(uni->poss[uni->count], point, sizeof(point));
+						glm_scale_make(uni->transforms[uni->count],
+							       (vec3) {cell_width,
+								       cell_width,
+								       cell_width});
+						glm_translate(uni->transforms[uni->count], point);
 						uni->types[4 * uni->count] = 3;
-						uni->sizes[4 * uni->count] = cell_width / 2;
 						uni->count++;
 					}
 				}
@@ -181,13 +199,7 @@ int calc_intersect(struct Uniform* uni,
 }
 
 int main() {
-	// Check alignment
-	printf("count: %lu\n", offsetof(struct Uniform, count));
-	printf("poss: %lu\n", offsetof(struct Uniform, poss));
-	printf("types: %lu\n", offsetof(struct Uniform, types));
-	printf("sizes: %lu\n", offsetof(struct Uniform, sizes));
-	printf("transforms: %lu\n", offsetof(struct Uniform, transforms));
-	printf("Total size: %lu\n", sizeof(struct Uniform));
+	printf("Uniform buffer size: %lu\n", sizeof(struct Uniform));
 	
         glfwInit();
         glfwSetErrorCallback(glfw_error_callback);
@@ -232,36 +244,28 @@ int main() {
 	// Write to uniform buffer
 	uniform_data->count = 4;
 	// Sphere
-	uniform_data->poss[0][0] = 0;
-	uniform_data->poss[0][1] = 0;
-	uniform_data->poss[0][2] = 0;
-	uniform_data->types[0] = 0;
-	uniform_data->sizes[0] = 2;
-	glm_mat4_identity(uniform_data->transforms[0]);
+	uniform_data->types[4 * 0] = 0;
+	glm_translate_make(uniform_data->transforms[0], (vec3) {0, -6, 0});
+	glm_scale(uniform_data->transforms[0], (vec3) {2, 2, 2});
 
 	// Cube
-	uniform_data->poss[1][0] = 0;
-	uniform_data->poss[1][1] = 3;
-	uniform_data->poss[1][2] = 0;
 	uniform_data->types[4 * 1] = 1;
-	uniform_data->sizes[4 * 1] = 2;
-	glm_mat4_identity(uniform_data->transforms[1]);
+	// Note that these happen in the reverse order, the scale is done first. Don't know why,
+	// something complicated and mathematical.
+	glm_translate_make(uniform_data->transforms[1], (vec3) {0, 3, 0});
+	glm_scale(uniform_data->transforms[1], (vec3) {2, 2, 2});
 
 	// Fractal
-	uniform_data->poss[2][0] = 6;
-	uniform_data->poss[2][1] = 0;
-	uniform_data->poss[2][2] = 0;
 	uniform_data->types[4 * 2] = 2;
-	uniform_data->sizes[4 * 2] = 3;
-	glm_mat4_identity(uniform_data->transforms[2]);
+	glm_translate_make(uniform_data->transforms[2], (vec3) {6, 0, 0});
+	glm_scale(uniform_data->transforms[2], (vec3) {3, 3, 3});
 
 	// Cone
-	uniform_data->poss[3][0] = 12;
-	uniform_data->poss[3][1] = 0;
-	uniform_data->poss[3][2] = 0;
 	uniform_data->types[4 * 3] = 4;
-	uniform_data->sizes[4 * 3] = 3;
-	glm_rotate_make(uniform_data->transforms[3], 1, (vec3) {1, 1, 0});
+	//glm_translate_make(uniform_data->transforms[3], (vec3) {12, 0, 0});
+	vec3 normal = {0.577, 0.577, 0.577};
+	normal_matrix(normal, uniform_data->transforms[3]);
+	glm_translated(uniform_data->transforms[3], (vec3) {12, 0, 0});
 
 	// Create descriptor set
 	struct DescriptorInfo uniform_desc = {0};
@@ -427,6 +431,7 @@ int main() {
 			cam_movement[0] += MOVEMENT_SPEED * speed_multiplier;
 		} 
 
+		/*
 		if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
 			uniform_data->poss[0][0] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
 		} 
@@ -445,6 +450,7 @@ int main() {
 		if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
 			uniform_data->poss[0][2] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
 		} 
+		*/
 
         	// Update camera
         	camera_fly_update(&camera,
@@ -464,8 +470,10 @@ int main() {
 
 		struct timespec collision_start_time = timer_start();
 		uniform_data->count = 4;
-		int iter_count = calc_intersect(uniform_data, uniform_data->poss[0],
+		/*
+		int iter_count = calc_intersect(uniform_data, (vec3) {0, 0, 0},
 						-2, -2, -2, 2, 2, 2, 0);
+		*/
 		/*
 		printf("Collision calc took %d iterations (brute force would be around %d)\n",
 		       iter_count, (int) (1.14 * pow(8, 6)));

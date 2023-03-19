@@ -14,9 +14,7 @@ layout (push_constant, std140) uniform PushConstants {
 
 layout (std140, set = 0, binding = 0) uniform Uniform {
 	int count;
-	vec4 poss[512];
 	int types[512];
-	float sizes[512];
 	mat4 transforms[512];
 } objects;
 
@@ -55,8 +53,6 @@ const mat3 ma = mat3( 0.60, 0.00,  0.80,
                       0.00, 1.00,  0.00,
                      -0.80, 0.00,  0.60 );
 float sd_menger(vec3 p) {
-	p /= objects.sizes[obj_idx];
-
 	float d = sd_box(p,vec3(1.0));
 	vec4 res = vec4( d, 1.0, 0.0, 0.0 );
 
@@ -91,8 +87,7 @@ float sd_box_frame(vec3 point, vec3 box_size, float e) {
 
 // Taken from same page ^
 float sd_cone(vec3 p, vec2 c, float h) {
-	p.y -= h;
-	p.y /= h / 1.5;
+	p.y -= h / 2;
 	// c is cos(angle), sin(angle)
 
 	float q = length(p.xz);
@@ -102,20 +97,18 @@ float sd_cone(vec3 p, vec2 c, float h) {
 float scene_sdf(vec3 point) {
 	float min_dist = 99999999;
 	int type = objects.types[obj_idx];
-	float size = objects.sizes[obj_idx];
-	vec3 point_rel = point - objects.poss[obj_idx].xyz;
-	point_rel = (inverse(objects.transforms[obj_idx]) * vec4(point_rel, 1)).xyz;
+	vec3 point_rel = (inverse(objects.transforms[obj_idx]) * vec4(point, 1)).xyz;
 	float dist;
 	if (type == 0) {
-		dist = sd_sphere(point_rel, size);
+		dist = sd_sphere(point_rel, 1);
 	} else if (type == 1) {
-		dist = sd_box(point_rel, vec3(size));
+		dist = sd_box(point_rel, vec3(1));
 	} else if (type == 2) {
 		dist = sd_menger(point_rel);
 	} else if (type == 3) {
-		dist = sd_box_frame(point_rel, vec3(size), 0.1 * size);
+		dist = sd_box_frame(point_rel, vec3(1), 0.1);
 	} else if (type == 4) {
-		dist = sd_cone(point_rel, vec2(0.866, 0.5), size);
+		dist = sd_cone(point_rel, vec2(0.940, 0.342), 2);
 	}
 
 	if (dist < min_dist) min_dist = dist;
