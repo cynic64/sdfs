@@ -17,6 +17,7 @@ layout (std140, set = 0, binding = 0) uniform Uniform {
 	vec4 poss[1024];
 	int types[1024];
 	float sizes[1024];
+	mat4 transform;
 } objects;
 
 vec3 vertices[36] = vec3[](

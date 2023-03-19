@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <sys/param.h>
+#include <stdint.h>
 
 const char* DEVICE_EXTS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 const int DEVICE_EXT_CT = 1;
@@ -59,12 +60,14 @@ struct PushConstants {
 #define MAX_OBJ_COUNT 1024
 
 struct Uniform {
-	int count;
-	vec4 poss[MAX_OBJ_COUNT];
+	int32_t count;
+	__attribute__((aligned(16))) vec4 poss[MAX_OBJ_COUNT];
 	// Shader pads everything to 32 bytes, even arrays :(
-	int types[MAX_OBJ_COUNT * 4];
+	__attribute__((aligned(16))) int32_t types[MAX_OBJ_COUNT * 4];
 	// This is half the side length of the bounding box
-	float sizes[MAX_OBJ_COUNT * 4];
+	__attribute__((aligned(16))) float sizes[MAX_OBJ_COUNT * 4];
+
+	__attribute__((aligned(16))) mat4 transform;
 };
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
@@ -217,7 +220,7 @@ int main() {
 	assert(res == VK_SUCCESS);
 
 	// Write to uniform buffer
-	uniform_data->count = 3;
+	uniform_data->count = 4;
 	// Sphere
 	uniform_data->poss[0][0] = 0;
 	uniform_data->poss[0][1] = 0;
@@ -238,6 +241,16 @@ int main() {
 	uniform_data->poss[2][2] = 0;
 	uniform_data->types[4 * 2] = 2;
 	uniform_data->sizes[4 * 2] = 3;
+
+	// Cone
+	uniform_data->poss[3][0] = 12;
+	uniform_data->poss[3][1] = 0;
+	uniform_data->poss[3][2] = 0;
+	uniform_data->types[4 * 3] = 4;
+	uniform_data->sizes[4 * 3] = 3;
+
+	// Transform
+	glm_rotate_make(uniform_data->transform, 0, (vec3) {0, 1, 0});
 
 	// Create descriptor set
 	struct DescriptorInfo uniform_desc = {0};
@@ -439,11 +452,13 @@ int main() {
                 assert(res == VK_SUCCESS);
 
 		struct timespec collision_start_time = timer_start();
-		uniform_data->count = 3;
+		uniform_data->count = 4;
 		int iter_count = calc_intersect(uniform_data, uniform_data->poss[0],
 						-2, -2, -2, 2, 2, 2, 0);
+		/*
 		printf("Collision calc took %d iterations (brute force would be around %d)\n",
 		       iter_count, (int) (1.14 * pow(8, 6)));
+		*/
 		total_collision_time += timer_get_elapsed(&collision_start_time);
 
 		buffer_copy(base.queue, cbuf, uniform_buf_staging.handle, uniform_buf.handle,

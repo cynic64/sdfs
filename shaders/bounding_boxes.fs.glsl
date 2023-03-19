@@ -17,6 +17,7 @@ layout (std140, set = 0, binding = 0) uniform Uniform {
 	vec4 poss[1024];
 	int types[1024];
 	float sizes[1024];
+	mat4 transform;
 } objects;
 
 struct RayShot {
@@ -88,21 +89,33 @@ float sd_box_frame(vec3 point, vec3 box_size, float e) {
 		   length(max(vec3(q.x,q.y,p.z),0.0))+min(max(q.x,max(q.y,p.z)),0.0));
 }
 
+// Taken from same page ^
+float sd_cone(vec3 p, vec2 c, float h) {
+	p.y -= h;
+	p.y /= h / 1.5;
+	// c is cos(angle), sin(angle)
+
+	float q = length(p.xz);
+	return max(dot(c.xy,vec2(q,p.y)),-h-p.y);
+}
+
 float scene_sdf(vec3 point) {
 	float min_dist = 99999999;
 	int type = objects.types[obj_idx];
+	float size = objects.sizes[obj_idx];
+	vec3 point_rel = point - objects.poss[obj_idx].xyz;
 	float dist;
 	if (type == 0) {
-		dist = sd_sphere(point - objects.poss[obj_idx].xyz, objects.sizes[obj_idx]);
+		dist = sd_sphere(point_rel, size);
 	} else if (type == 1) {
-		dist = sd_box(point - objects.poss[obj_idx].xyz, vec3(objects.sizes[obj_idx]));
+		dist = sd_box(point_rel, vec3(size));
 	} else if (type == 2) {
-		dist = sd_menger(point - objects.poss[obj_idx].xyz);
+		dist = sd_menger(point_rel);
 	} else if (type == 3) {
-		float size = objects.sizes[obj_idx];
-		dist = sd_box_frame(point - objects.poss[obj_idx].xyz, vec3(size),
-				    0.1 * size);
-	} 
+		dist = sd_box_frame(point_rel, vec3(size), 0.1 * size);
+	} else if (type == 4) {
+		dist = sd_cone(point_rel, vec2(0.866, 0.5), size);
+	}
 
 	if (dist < min_dist) min_dist = dist;
 
