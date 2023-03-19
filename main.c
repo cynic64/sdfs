@@ -113,11 +113,13 @@ float sd_sphere(vec3 point, float radius) {
 }
 
 // Creates a rotation matrix that makes (0, 1, 0) point in the direction of `normal`
+// Expects `normal` to be normalized
 void normal_matrix(vec3 normal, mat4 out) {
 	vec3 perp = {-normal[1], normal[0], 0};
 	vec3 perp2;
 	glm_vec3_cross(normal, perp, perp2);
 	glm_vec3_normalize(perp2);
+	glm_vec3_normalize(perp);
 
 	glm_mat4_identity(out);
 	// This row is where 1 0 0 ends up
@@ -126,6 +128,32 @@ void normal_matrix(vec3 normal, mat4 out) {
 	memcpy(out[1], normal, sizeof(vec3));
 	// This is where 0 0 1 ends up
 	memcpy(out[2], perp2, sizeof(vec3));
+}
+
+void calc_normal(vec3 in, vec3 out) {
+    const float h = 0.0002;
+
+    vec3 a_point = {in[0] + h, in[1] - h, in[2] - h};
+    float a_dist = sd_sphere(a_point, 2);
+    vec3 a_vec = {+a_dist, -a_dist, -a_dist};
+
+    vec3 b_point = {in[0] - h, in[1] - h, in[2] + h};
+    float b_dist = sd_sphere(b_point, 2);
+    vec3 b_vec = {-b_dist, -b_dist, +b_dist};
+
+    vec3 c_point = {in[0] - h, in[1] + h, in[2] - h};
+    float c_dist = sd_sphere(c_point, 2);
+    vec3 c_vec = {-c_dist, +c_dist, -c_dist};
+
+    vec3 d_point = {in[0] + h, in[1] + h, in[2] + h};
+    float d_dist = sd_sphere(d_point, 2);
+    vec3 d_vec = {+d_dist, +d_dist, +d_dist};
+
+    out[0] = a_vec[0] + b_vec[0] + c_vec[0] + d_vec[0];
+    out[1] = a_vec[1] + b_vec[1] + c_vec[1] + d_vec[1];
+    out[2] = a_vec[2] + b_vec[2] + c_vec[2] + d_vec[2];
+
+    glm_vec3_normalize(out);
 }
 
 int calc_intersect(struct Uniform* uni,
@@ -139,6 +167,7 @@ int calc_intersect(struct Uniform* uni,
 	float cell_width = (end_x - start_x) / steps;
 	float cell_height = (end_y - start_y) / steps;
 	float cell_depth = (end_z - start_z) / steps;
+	assert(cell_width == cell_height && cell_height == cell_depth);
 	// Length of cell's diagonal
 	float margin = sqrtf(cell_width*cell_width*0.25
 			     + cell_height*cell_height*0.25
@@ -167,7 +196,7 @@ int calc_intersect(struct Uniform* uni,
 				float min_dist = fmin(sphere_dist, box_dist);
 				
 				if (max_dist < margin && -min_dist < margin) {
-					if (depth < 5) {
+					if (depth < 2) {
 						iter_count +=
 							calc_intersect(uni,
 								       sphere_pos,
@@ -179,15 +208,40 @@ int calc_intersect(struct Uniform* uni,
 								       start_z + (z+1)*cell_depth,
 								       depth + 1);
 					} else if (uni->count < MAX_OBJ_COUNT) {
+						vec3 normal;
+						calc_normal(point, normal);
+
 						point[0] -= 4;
-						/*
-						glm_translate_make(uni->transforms[uni->count], point);
-						*/
-						glm_scale(uni->transforms[uni->count],
-							  (vec3) {cell_width,
-								  cell_height,
-								  cell_depth});
+
+						// Box frame
 						uni->types[4 * uni->count] = 3;
+						glm_translate_make(uni->transforms[uni->count], point);
+						glm_scale(uni->transforms[uni->count],
+							  (vec3) {cell_width / 2,
+								  cell_height / 2,
+								  cell_depth / 2});
+						uni->count++;
+
+						// Box showing normal (cones don't scale well for
+						// whatever reason)
+						uni->types[4 * uni->count] = 1;
+						mat4 trans1;
+						glm_translate_make(trans1,
+								   (vec3) {point[0],
+									   point[1],
+									   point[2]});
+						mat4 trans2;
+						glm_translate_make(trans2, (vec3) {0, 2.5, 0});
+						mat4 scale;
+						glm_scale_make(scale,
+							       (vec3) {cell_width / 4,
+								       cell_height / 4,
+								       cell_depth / 4});
+						mat4 norm;
+						normal_matrix(normal, norm);
+						glm_mat4_mulN((mat4*[])
+							      {&trans1, &scale, &norm, &trans2}, 4,
+							      uni->transforms[uni->count]);
 						uni->count++;
 					}
 				}
@@ -248,14 +302,14 @@ int main() {
 	// Sphere
 	uniform_data->types[4 * 0] = 0;
 	glm_translate_make(uniform_data->transforms[0], (vec3) {0, 0, 0});
-	glm_scale(uniform_data->transforms[0], (vec3) {0.7, 0.7, 0.7});
+	glm_scale(uniform_data->transforms[0], (vec3) {2, 2, 2});
 
 	// Cube
 	uniform_data->types[4 * 1] = 1;
 	// Note that these happen in the reverse order, the scale is done first. Don't know why,
 	// something complicated and mathematical.
 	glm_translate_make(uniform_data->transforms[1], (vec3) {0, 3, 0});
-	glm_scale(uniform_data->transforms[1], (vec3) {0.7, 0.7, 0.7});
+	glm_scale(uniform_data->transforms[1], (vec3) {2, 2, 2});
 
 	// Fractal
 	uniform_data->types[4 * 2] = 2;

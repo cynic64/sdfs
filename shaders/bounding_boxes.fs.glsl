@@ -87,7 +87,7 @@ float sd_box_frame(vec3 point, vec3 box_size, float e) {
 
 // Taken from same page ^
 float sd_cone(vec3 p, vec2 c, float h) {
-	p.y -= h / 2;
+	//p.y -= h / 2;
 	// c is sin(angle), cos(angle)
 
 	// Alternatively pass q instead of (c,h),
@@ -103,6 +103,26 @@ float sd_cone(vec3 p, vec2 c, float h) {
 	return sqrt(d)*sign(s);
 }
 
+float sd_pyramid( vec3 p, float h) {
+	float m2 = h*h + 0.25;
+    
+	p.xz = abs(p.xz);
+	p.xz = (p.z>p.x) ? p.zx : p.xz;
+	p.xz -= 0.5;
+
+	vec3 q = vec3( p.z, h*p.y - 0.5*p.x, h*p.x + 0.5*p.y);
+   
+	float s = max(-q.x,0.0);
+	float t = clamp( (q.y-0.5*p.z)/(m2+0.25), 0.0, 1.0 );
+    
+	float a = m2*(q.x+s)*(q.x+s) + q.y*q.y;
+	float b = m2*(q.x+0.5*t)*(q.x+0.5*t) + (q.y-m2*t)*(q.y-m2*t);
+    
+	float d2 = min(q.y,-q.x*m2-q.y*0.5) > 0.0 ? 0.0 : min(a,b);
+    
+	return sqrt( (d2+q.z*q.z)/m2 ) * sign(max(q.z,-p.y));
+}
+
 float scene_sdf(vec3 point) {
 	float min_dist = 99999999;
 	int type = objects.types[obj_idx];
@@ -115,9 +135,9 @@ float scene_sdf(vec3 point) {
 	} else if (type == 2) {
 		dist = sd_menger(point_rel);
 	} else if (type == 3) {
-		dist = sd_box_frame(point_rel, vec3(1), 0.1);
+		dist = sd_box_frame(point_rel, vec3(1), 0.05);
 	} else if (type == 4) {
-		dist = sd_cone(point_rel, vec2(0.342, 0.940), 2);
+		dist = sd_pyramid(point_rel, 1);
 	}
 
 	if (dist < min_dist) min_dist = dist;
@@ -126,7 +146,7 @@ float scene_sdf(vec3 point) {
 }
 
 RayShot raymarch(vec3 ray_origin, vec3 ray_dir, float initial_depth) {
-	float threshold = 0.005;
+	float threshold = 0.001;
 	float depth = initial_depth;
 	for (int i = 0; i < 128; i++) {
 		vec3 point = ray_origin + ray_dir * depth;
@@ -151,7 +171,7 @@ RayShot raymarch(vec3 ray_origin, vec3 ray_dir, float initial_depth) {
 
 // Taken from iquilezles.org/articles/normalsSDF/
 // Messing with this is bad juju
-vec3 calc_normal(in vec3 point) {
+vec3 calc_normal(vec3 point) {
     const float h = 0.0002;
     const vec2 k = vec2(1,-1);
     return normalize(k.xyy*scene_sdf(point + k.xyy*h)
@@ -169,10 +189,10 @@ void main()
 	RayShot shot = raymarch(ray_origin, ray_dir, length(pos_worldspace - ray_origin));
 	if (shot.hit) {
 		out_color = vec4((calc_normal(shot.closest) * 0.5 + 0.5), 1);
-		gl_FragDepth = clamp(shot.depth / 1000, 0, 1);
+		gl_FragDepth = clamp(shot.depth / 100, 0, 1);
 	} else {
 		out_color = vec4(vec3(objects.types[obj_idx] * 0.2) + 0.1, 1);
-		gl_FragDepth = 1;
+		gl_FragDepth = 0.9;
 	}
 	//out_color = vec4(vec3(objects.types[obj_idx] * 0.2) + 0.1, 1);
 	//out_color = vec4((inverse(objects.transforms[obj_idx]) * vec4(pos_worldspace, 1)).xyz * 0.5 + 0.5, 1);
