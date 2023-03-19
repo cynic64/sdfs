@@ -104,6 +104,7 @@ float scene_sdf(vec3 point) {
 	int type = objects.types[obj_idx];
 	float size = objects.sizes[obj_idx];
 	vec3 point_rel = point - objects.poss[obj_idx].xyz;
+	point_rel = (inverse(objects.transform) * vec4(point_rel, 1)).xyz;
 	float dist;
 	if (type == 0) {
 		dist = sd_sphere(point_rel, size);
@@ -171,4 +172,5 @@ void main()
 		out_color = vec4(vec3(objects.types[obj_idx] * 0.2) + 0.1, 1);
 		gl_FragDepth = 1;
 	}
+	//out_color = vec4(vec3(objects.types[obj_idx] * 0.2) + 0.1, 1);
 }

@@ -69,10 +69,12 @@ layout (location = 1) out vec3 pos_worldspace;
 void main() {
 	// Figure out where it goes on screen
 	int vertex_count = 36;
-        vec3 offset = vertices[gl_VertexIndex % vertex_count];
 	obj_idx = gl_VertexIndex / vertex_count;
 
-	pos_worldspace = objects.poss[obj_idx].xyz + offset * objects.sizes[obj_idx];
+        vec3 offset = (objects.transform * vec4(vertices[gl_VertexIndex % vertex_count], 1)).xyz;
+	offset *= objects.sizes[obj_idx];
+
+	pos_worldspace = objects.poss[obj_idx].xyz + offset;
 	vec4 pos_screenspace = constants.proj * constants.view * vec4(pos_worldspace, 1);
 
 	gl_Position = pos_screenspace;

@@ -1,3 +1,4 @@
+#include "external/cglm/include/cglm/affine.h"
 #include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -179,6 +180,13 @@ int calc_intersect(struct Uniform* uni,
 }
 
 int main() {
+	// Check alignment
+	printf("count: %lu\n", offsetof(struct Uniform, count));
+	printf("poss: %lu\n", offsetof(struct Uniform, poss));
+	printf("types: %lu\n", offsetof(struct Uniform, types));
+	printf("sizes: %lu\n", offsetof(struct Uniform, sizes));
+	printf("transform: %lu\n", offsetof(struct Uniform, transform));
+	
         glfwInit();
         glfwSetErrorCallback(glfw_error_callback);
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -250,7 +258,7 @@ int main() {
 	uniform_data->sizes[4 * 3] = 3;
 
 	// Transform
-	glm_rotate_make(uniform_data->transform, 0, (vec3) {0, 1, 0});
+	glm_rotate_make(uniform_data->transform, 1, (vec3) {1, 1, 0});
 
 	// Create descriptor set
 	struct DescriptorInfo uniform_desc = {0};
