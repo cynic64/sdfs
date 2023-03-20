@@ -335,11 +335,18 @@ int main() {
 	glm_translated(uniform_data->transforms[3], (vec3) {12, 0, 0});
 
 	// Allocate storage buffer for compute shader
-	struct Buffer compute_buf, compute_buf_staging;
+	struct Buffer compute_buf, compute_buf_staging, compute_buf_reader;
+	struct StorageData compute_buf_initial_data = {0};
 	buffer_create_staged(base.phys_dev, base.device, base.queue, base.cpool,
-			     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 			     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			     sizeof(struct StorageData), NULL, &compute_buf, &compute_buf_staging);
+			     sizeof(struct StorageData), &compute_buf_initial_data,
+			     &compute_buf, &compute_buf_staging);
+	// This is so we can read data back out
+	buffer_create(base.phys_dev, base.device,
+		      VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+		      sizeof(struct StorageData), &compute_buf_reader);
 
 	// Descriptor info for uniform buffer
 	struct DescriptorInfo uniform_desc = {0};
@@ -548,27 +555,6 @@ int main() {
 			cam_movement[0] += MOVEMENT_SPEED * speed_multiplier;
 		} 
 
-		/*
-		if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
-			uniform_data->poss[0][0] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
-		} 
-		if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
-			uniform_data->poss[0][0] += MOVEMENT_SPEED * speed_multiplier * 0.1;
-		} 
-		if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-			uniform_data->poss[0][1] += MOVEMENT_SPEED * speed_multiplier * 0.1;
-		} 
-		if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
-			uniform_data->poss[0][1] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
-		} 
-		if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
-			uniform_data->poss[0][2] += MOVEMENT_SPEED * speed_multiplier * 0.1;
-		} 
-		if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-			uniform_data->poss[0][2] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
-		} 
-		*/
-
         	// Update camera
         	camera_fly_update(&camera,
                                   d_mouse_x * MOUSE_SENSITIVITY_FACTOR,
@@ -595,8 +581,18 @@ int main() {
 		*/
 		total_collision_time += timer_get_elapsed(&collision_start_time);
 
+		// Update uniform buffer
 		buffer_copy(base.queue, cbuf, uniform_buf_staging.handle, uniform_buf.handle,
 			    sizeof(struct Uniform));
+
+		// Check output of compute shader
+		buffer_copy(base.queue, cbuf, compute_buf.handle, compute_buf_reader.handle,
+			    sizeof(struct StorageData));
+		struct StorageData* compute_buf_mapped;
+		vkMapMemory(base.device, compute_buf_reader.mem, 0, sizeof(*compute_buf_mapped), 0,
+			    (void **) &compute_buf_mapped);
+		printf("x: %d\n", compute_buf_mapped->x);
+		vkUnmapMemory(base.device, compute_buf_reader.mem);
 
                 // Reset command buffer
                 vkResetCommandBuffer(cbuf, 0);
@@ -664,7 +660,7 @@ int main() {
                 vkCmdDraw(cbuf, 36 * uniform_data->count, 1, 0, 0);
 
                 vkCmdEndRenderPass(cbuf);
-
+		
 		vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipe);
 		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipe_layout,
 					0, 1, &compute_set, 0, NULL);
@@ -751,6 +747,7 @@ int main() {
 	vkDestroyDescriptorSetLayout(base.device, compute_set_layout, NULL);
 	buffer_destroy(base.device, &compute_buf);
 	buffer_destroy(base.device, &compute_buf_staging);
+	buffer_destroy(base.device, &compute_buf_reader);
         base_destroy(&base);
 
         glfwTerminate();
