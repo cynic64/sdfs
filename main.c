@@ -72,6 +72,10 @@ struct Uniform {
 	__attribute__((aligned(16))) mat4 transforms[MAX_OBJ_COUNT];
 };
 
+struct StorageData {
+	int32_t x;
+};
+
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
         fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->render_fence);
         semaphore_create(device, &sync_set->acquire_sem);
@@ -265,7 +269,7 @@ int main() {
 
 	// Base
         struct Base base;
-        base_create(window, 1, 0, NULL, DEVICE_EXT_CT, DEVICE_EXTS, &base);
+        base_create(window, 1, 1, 0, NULL, DEVICE_EXT_CT, DEVICE_EXTS, &base);
 
 	// Swapchain
         struct Swapchain swapchain;
@@ -282,6 +286,12 @@ int main() {
 	load_shader(base.device, "shaders/bounding_boxes.fs.spv",
 		    &boxes_fs, VK_SHADER_STAGE_FRAGMENT_BIT, &boxes_shaders[1]);
 
+	// Compute shader
+	VkShaderModule compute_shader;
+	VkPipelineShaderStageCreateInfo compute_shader_info = {0};
+	load_shader(base.device, "shaders/compute.spv",
+		    &compute_shader, VK_SHADER_STAGE_COMPUTE_BIT, &compute_shader_info);
+
         // Render pass
 	VkRenderPass rpass;
 	rpass_color_depth(base.device, swapchain.format, DEPTH_FORMAT, &rpass);
@@ -289,7 +299,8 @@ int main() {
 	// Allocate uniform buffer
 	struct Buffer uniform_buf, uniform_buf_staging;
 	buffer_create_staged(base.phys_dev, base.device, base.queue, base.cpool,
-			     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			     sizeof(struct Uniform), NULL, &uniform_buf, &uniform_buf_staging);
 
 	struct Uniform* uniform_data;
@@ -323,29 +334,55 @@ int main() {
 	normal_matrix(normal, uniform_data->transforms[3]);
 	glm_translated(uniform_data->transforms[3], (vec3) {12, 0, 0});
 
-	// Create descriptor set
+	// Allocate storage buffer for compute shader
+	struct Buffer compute_buf, compute_buf_staging;
+	buffer_create_staged(base.phys_dev, base.device, base.queue, base.cpool,
+			     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			     sizeof(struct StorageData), NULL, &compute_buf, &compute_buf_staging);
+
+	// Descriptor info for uniform buffer
 	struct DescriptorInfo uniform_desc = {0};
 	uniform_desc.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	uniform_desc.shader_stage_flags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 	uniform_desc.buffer.buffer = uniform_buf.handle;
 	uniform_desc.buffer.range = VK_WHOLE_SIZE;
 
+	// Descriptor info for storage buffer
+	struct DescriptorInfo storage_desc = {0};
+	storage_desc.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	storage_desc.shader_stage_flags = VK_SHADER_STAGE_COMPUTE_BIT;
+	storage_desc.buffer.buffer = compute_buf.handle;
+	storage_desc.buffer.range = VK_WHOLE_SIZE;
+
+	// Create descriptor pool
+	struct DescriptorInfo descriptors[] = {uniform_desc, storage_desc};
+	VkDescriptorPool dpool;
+	dpool_create(base.device, 2, sizeof(descriptors) / sizeof(descriptors[0]), descriptors, &dpool);
+	
+	// Create set for uniform buffer
 	struct SetInfo set_info = {0};
 	set_info.desc_ct = 1;
 	set_info.descs = &uniform_desc;
 
-	// Create descriptor pool
-	VkDescriptorPool dpool;
-	dpool_create(base.device, 1, &uniform_desc, &dpool);
-	
-	// Create the set
 	VkDescriptorSetLayout set_layout;
 	set_layout_create(base.device, &set_info, &set_layout);
 
 	VkDescriptorSet set;
 	set_create(base.device, dpool, set_layout, &set_info, &set);
 
-        // Pipeline
+	// Create set for storage buffer
+	struct SetInfo compute_set_info = {0};
+	compute_set_info.desc_ct = 1;
+	compute_set_info.descs = &storage_desc;
+
+	VkDescriptorSetLayout compute_set_layout;
+	set_layout_create(base.device, &compute_set_info, &compute_set_layout);
+
+	VkDescriptorSet compute_set;
+	set_create(base.device, dpool, compute_set_layout, &compute_set_info, &compute_set);
+
+        // Graphics pipeline
 	// Layout
 	VkPushConstantRange pushc_range = {0};
         pushc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -377,6 +414,30 @@ int main() {
 
         vkDestroyShaderModule(base.device, boxes_vs, NULL);
         vkDestroyShaderModule(base.device, boxes_fs, NULL);
+
+	// Compute pipeline
+	// Layout
+	VkPipelineLayoutCreateInfo compute_pipe_layout_info = {0};
+	compute_pipe_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+	compute_pipe_layout_info.setLayoutCount = 1;
+	compute_pipe_layout_info.pSetLayouts = &compute_set_layout;
+
+	VkPipelineLayout compute_pipe_layout;
+	res = vkCreatePipelineLayout(base.device, &compute_pipe_layout_info, NULL,
+				     &compute_pipe_layout);
+	assert(res == VK_SUCCESS);
+
+	// Actual pipeline
+	VkComputePipelineCreateInfo compute_pipe_info = {0};
+	compute_pipe_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+	compute_pipe_info.layout = compute_pipe_layout;
+	compute_pipe_info.stage = compute_shader_info;
+
+	VkPipeline compute_pipe;
+	res = vkCreateComputePipelines(base.device, NULL, 1, &compute_pipe_info, NULL, &compute_pipe);
+	assert(res == VK_SUCCESS);
+
+	vkDestroyShaderModule(base.device, compute_shader, NULL);
 
         // Framebuffers, we'll create them later
         VkFramebuffer* framebuffers = malloc(swapchain.image_ct * sizeof(framebuffers[0]));
@@ -604,6 +665,11 @@ int main() {
 
                 vkCmdEndRenderPass(cbuf);
 
+		vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipe);
+		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipe_layout,
+					0, 1, &compute_set, 0, NULL);
+		vkCmdDispatch(cbuf, 1, 1, 1);
+
                 res = vkEndCommandBuffer(cbuf);
                 assert(res == VK_SUCCESS);
 
@@ -658,8 +724,10 @@ int main() {
         vkDeviceWaitIdle(base.device);
 
         vkDestroyPipelineLayout(base.device, pipe_layout, NULL);
+        vkDestroyPipelineLayout(base.device, compute_pipe_layout, NULL);
 
         vkDestroyPipeline(base.device, boxes_pipe, NULL);
+        vkDestroyPipeline(base.device, compute_pipe, NULL);
 
         vkDestroyRenderPass(base.device, rpass, NULL);
 
@@ -679,6 +747,10 @@ int main() {
 	vkUnmapMemory(base.device, uniform_buf_staging.mem);
 	buffer_destroy(base.device, &uniform_buf);
 	buffer_destroy(base.device, &uniform_buf_staging);
+
+	vkDestroyDescriptorSetLayout(base.device, compute_set_layout, NULL);
+	buffer_destroy(base.device, &compute_buf);
+	buffer_destroy(base.device, &compute_buf_staging);
         base_destroy(&base);
 
         glfwTerminate();
