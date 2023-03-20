@@ -11,7 +11,14 @@ sub wanted {
         return unless /\.glsl$/;
         my $src = $_;
         (my $dst = $src) =~ s/\.glsl/.spv/;
-	my $stage = $_ =~ /\.vs\./ ? "vertex" : "fragment";
+	my $stage;
+	if ($_ =~ /\.vs\./) {
+	    $stage = "vertex";
+	} elsif ($_ =~ /\.fs\./) {
+	    $stage = "fragent";
+	} else {
+	    $stage = "compute";
+	}
 	my $cmd = "glslc -fshader-stage=$stage $src -o $dst";
 	print "$cmd\n";
 	system $cmd;
