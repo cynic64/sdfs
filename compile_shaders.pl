@@ -15,7 +15,7 @@ sub wanted {
 	if ($_ =~ /\.vs\./) {
 	    $stage = "vertex";
 	} elsif ($_ =~ /\.fs\./) {
-	    $stage = "fragent";
+	    $stage = "fragment";
 	} else {
 	    $stage = "compute";
 	}
