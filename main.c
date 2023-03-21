@@ -74,6 +74,7 @@ struct StorageData {
 // This stuff exists for every concurrent frame
 struct SyncSet {
         VkFence render_fence;
+	VkFence compute_fence;
         VkSemaphore acquire_sem;
 	// Signalled when compute shader finishes. Graphics submission waits on this and
 	// acquire_sem.
@@ -83,6 +84,7 @@ struct SyncSet {
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
         fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->render_fence);
+        fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->compute_fence);
         semaphore_create(device, &sync_set->acquire_sem);
         semaphore_create(device, &sync_set->compute_sem);
         semaphore_create(device, &sync_set->render_sem);
@@ -90,6 +92,7 @@ void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
 
 void sync_set_destroy(VkDevice device, struct SyncSet* sync_set) {
 	vkDestroyFence(device, sync_set->render_fence, NULL);
+	vkDestroyFence(device, sync_set->compute_fence, NULL);
 	vkDestroySemaphore(device, sync_set->acquire_sem, NULL);
 	vkDestroySemaphore(device, sync_set->compute_sem, NULL);
 	vkDestroySemaphore(device, sync_set->render_sem, NULL);
@@ -476,10 +479,6 @@ int main() {
         VkFence* image_fences = malloc(swapchain.image_ct * sizeof(image_fences[0]));
         for (int i = 0; i < swapchain.image_ct; i++) image_fences[i] = VK_NULL_HANDLE;
 
-	// Fence for compute shader (we can't run two instances at once)
-	VkFence compute_fence;
-	fence_create(base.device, VK_FENCE_CREATE_SIGNALED_BIT, &compute_fence);
-
 	// Camera
 	struct CameraFly camera;
 	camera.pitch = 0.0F;
@@ -596,8 +595,8 @@ int main() {
 		total_collision_time += timer_get_elapsed(&collision_start_time);
 
 		// Wait for compute shader to finish
-		vkWaitForFences(base.device, 1, &compute_fence, VK_TRUE, UINT64_MAX);
-		vkResetFences(base.device, 1, &compute_fence);
+		vkWaitForFences(base.device, 1, &sync_set->compute_fence, VK_TRUE, UINT64_MAX);
+		vkResetFences(base.device, 1, &sync_set->compute_fence);
 
 		// Check output of compute shader
 		buffer_copy(base.queue, compute_cbuf, compute_buf.handle, compute_buf_reader.handle,
@@ -630,7 +629,7 @@ int main() {
 		compute_submit_info.signalSemaphoreCount = 1;
 		compute_submit_info.pSignalSemaphores = &sync_set->compute_sem;
 
-		res = vkQueueSubmit(base.queue, 1, &compute_submit_info, compute_fence);
+		res = vkQueueSubmit(base.queue, 1, &compute_submit_info, sync_set->compute_fence);
 		assert(res == VK_SUCCESS);
 
                 // Acquire an image
@@ -785,8 +784,6 @@ int main() {
 	buffer_destroy(base.device, &compute_buf);
 	buffer_destroy(base.device, &compute_buf_staging);
 	buffer_destroy(base.device, &compute_buf_reader);
-
-	vkDestroyFence(base.device, compute_fence, NULL);
 
         base_destroy(&base);
 
