@@ -1,6 +1,7 @@
 #include "external/cglm/include/cglm/affine.h"
 #include "external/cglm/include/cglm/mat4.h"
 #include "external/cglm/include/cglm/vec3.h"
+#include "external/render-c/src/cbuf.h"
 #include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -40,12 +41,6 @@ const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_UNORM;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 const VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 
-struct SyncSet {
-        VkFence render_fence;
-        VkSemaphore acquire_sem;
-        VkSemaphore render_sem;
-};
-
 struct PushConstants {
 	// Pad to vec4 because std140
 	vec4 iResolution;
@@ -76,15 +71,27 @@ struct StorageData {
 	int32_t x;
 };
 
+// This stuff exists for every concurrent frame
+struct SyncSet {
+        VkFence render_fence;
+        VkSemaphore acquire_sem;
+	// Signalled when compute shader finishes. Graphics submission waits on this and
+	// acquire_sem.
+	VkSemaphore compute_sem;
+        VkSemaphore render_sem;
+};
+
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
         fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->render_fence);
         semaphore_create(device, &sync_set->acquire_sem);
+        semaphore_create(device, &sync_set->compute_sem);
         semaphore_create(device, &sync_set->render_sem);
 }
 
 void sync_set_destroy(VkDevice device, struct SyncSet* sync_set) {
 	vkDestroyFence(device, sync_set->render_fence, NULL);
 	vkDestroySemaphore(device, sync_set->acquire_sem, NULL);
+	vkDestroySemaphore(device, sync_set->compute_sem, NULL);
 	vkDestroySemaphore(device, sync_set->render_sem, NULL);
 }
 
@@ -454,8 +461,12 @@ int main() {
 	struct Image depth_image = {0};
 
         // Command buffers
-        VkCommandBuffer cbufs[CONCURRENT_FRAMES];
-        for (int i = 0; i < CONCURRENT_FRAMES; i++) cbuf_alloc(base.device, base.cpool, &cbufs[i]);
+        VkCommandBuffer graphics_cbufs[CONCURRENT_FRAMES];
+        VkCommandBuffer compute_cbufs[CONCURRENT_FRAMES];
+        for (int i = 0; i < CONCURRENT_FRAMES; i++) {
+		cbuf_alloc(base.device, base.cpool, &graphics_cbufs[i]);
+		cbuf_alloc(base.device, base.cpool, &compute_cbufs[i]);
+	}
 
         // Sync sets
         struct SyncSet sync_sets [CONCURRENT_FRAMES];
@@ -464,6 +475,10 @@ int main() {
         // Image fences
         VkFence* image_fences = malloc(swapchain.image_ct * sizeof(image_fences[0]));
         for (int i = 0; i < swapchain.image_ct; i++) image_fences[i] = VK_NULL_HANDLE;
+
+	// Fence for compute shader (we can't run two instances at once)
+	VkFence compute_fence;
+	fence_create(base.device, VK_FENCE_CREATE_SIGNALED_BIT, &compute_fence);
 
 	// Camera
 	struct CameraFly camera;
@@ -565,7 +580,8 @@ int main() {
                 int frame_idx = frame_ct % CONCURRENT_FRAMES;
                 struct SyncSet* sync_set = &sync_sets[frame_idx];
 
-                VkCommandBuffer cbuf = cbufs[frame_idx];
+                VkCommandBuffer graphics_cbuf = graphics_cbufs[frame_idx],
+			compute_cbuf = compute_cbufs[frame_idx];
 
                 // Wait for the render process using these sync objects to finish rendering
                 res = vkWaitForFences(base.device, 1, &sync_set->render_fence, VK_TRUE, UINT64_MAX);
@@ -573,20 +589,18 @@ int main() {
 
 		struct timespec collision_start_time = timer_start();
 		uniform_data->count = 4;
+		/*
 		int iter_count = calc_intersect(uniform_data, (vec3) {0, 0, 0},
 						-2, -2, -2, 2, 2, 2, 0);
-		/*
-		printf("Collision calc took %d iterations (brute force would be around %d)\n",
-		       iter_count, (int) (1.14 * pow(8, 6)));
 		*/
 		total_collision_time += timer_get_elapsed(&collision_start_time);
 
-		// Update uniform buffer
-		buffer_copy(base.queue, cbuf, uniform_buf_staging.handle, uniform_buf.handle,
-			    sizeof(struct Uniform));
+		// Wait for compute shader to finish
+		vkWaitForFences(base.device, 1, &compute_fence, VK_TRUE, UINT64_MAX);
+		vkResetFences(base.device, 1, &compute_fence);
 
 		// Check output of compute shader
-		buffer_copy(base.queue, cbuf, compute_buf.handle, compute_buf_reader.handle,
+		buffer_copy(base.queue, compute_cbuf, compute_buf.handle, compute_buf_reader.handle,
 			    sizeof(struct StorageData));
 		struct StorageData* compute_buf_mapped;
 		vkMapMemory(base.device, compute_buf_reader.mem, 0, sizeof(*compute_buf_mapped), 0,
@@ -594,8 +608,30 @@ int main() {
 		printf("x: %d\n", compute_buf_mapped->x);
 		vkUnmapMemory(base.device, compute_buf_reader.mem);
 
-                // Reset command buffer
-                vkResetCommandBuffer(cbuf, 0);
+		// Update uniform buffer
+		buffer_copy(base.queue, compute_cbuf, uniform_buf_staging.handle, uniform_buf.handle,
+			    sizeof(struct Uniform));
+
+                // Record compute dispatch
+                vkResetCommandBuffer(compute_cbuf, 0);
+		cbuf_begin_onetime(compute_cbuf);
+		vkCmdBindPipeline(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipe);
+		vkCmdBindDescriptorSets(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
+					compute_pipe_layout, 0, 1,
+					&compute_set, 0, NULL);
+		vkCmdDispatch(compute_cbuf, 1, 1, 1);
+                res = vkEndCommandBuffer(compute_cbuf);
+                assert(res == VK_SUCCESS);
+
+		VkSubmitInfo compute_submit_info = {0};
+		compute_submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		compute_submit_info.commandBufferCount = 1;
+		compute_submit_info.pCommandBuffers = &compute_cbuf;
+		compute_submit_info.signalSemaphoreCount = 1;
+		compute_submit_info.pSignalSemaphores = &sync_set->compute_sem;
+
+		res = vkQueueSubmit(base.queue, 1, &compute_submit_info, compute_fence);
+		assert(res == VK_SUCCESS);
 
                 // Acquire an image
                 uint32_t image_idx;
@@ -606,8 +642,9 @@ int main() {
                         continue;
                 } else assert(res == VK_SUCCESS);
 
-                // Record command buffer
-                cbuf_begin_onetime(cbuf);
+                // Record graphics commands
+                vkResetCommandBuffer(graphics_cbuf, 0);
+                cbuf_begin_onetime(graphics_cbuf);
 
                 VkClearValue clear_vals[] = {{{{0.0F, 0.0F, 0.0F, 1.0F}}},
                                              {{{1.0F}}}};
@@ -620,19 +657,19 @@ int main() {
                 cbuf_rpass_info.renderArea.extent.height = swapchain.height;
                 cbuf_rpass_info.clearValueCount = sizeof(clear_vals) / sizeof(clear_vals[0]);
                 cbuf_rpass_info.pClearValues = clear_vals;
-                vkCmdBeginRenderPass(cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
+                vkCmdBeginRenderPass(graphics_cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
 
                 VkViewport viewport = {0};
                 viewport.width = swapchain.width;
                 viewport.height = swapchain.height;
                 viewport.minDepth = 0.0F;
                 viewport.maxDepth = 1.0F;
-                vkCmdSetViewport(cbuf, 0, 1, &viewport);
+                vkCmdSetViewport(graphics_cbuf, 0, 1, &viewport);
 
                 VkRect2D scissor = {0};
                 scissor.extent.width = swapchain.width;
                 scissor.extent.height = swapchain.height;
-                vkCmdSetScissor(cbuf, 0, 1, &scissor);
+                vkCmdSetScissor(graphics_cbuf, 0, 1, &scissor);
 
                 struct PushConstants pushc_data;
 		pushc_data.iResolution[0] = swapchain.width;
@@ -650,23 +687,18 @@ int main() {
                 glm_perspective(1.0F, (float) swapchain.width / (float) swapchain.height, 0.1F,
 				10000.0F, pushc_data.proj);
 
-                vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, boxes_pipe);
-		vkCmdPushConstants(cbuf, pipe_layout,
+                vkCmdBindPipeline(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, boxes_pipe);
+		vkCmdPushConstants(graphics_cbuf, pipe_layout,
 				   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		                   0, sizeof(struct PushConstants), &pushc_data);
-		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_layout,
+		vkCmdBindDescriptorSets(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_layout,
 					0, 1, &set, 0, NULL);
 
-                vkCmdDraw(cbuf, 36 * uniform_data->count, 1, 0, 0);
+                vkCmdDraw(graphics_cbuf, 36 * uniform_data->count, 1, 0, 0);
 
-                vkCmdEndRenderPass(cbuf);
+                vkCmdEndRenderPass(graphics_cbuf);
 		
-		vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipe);
-		vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipe_layout,
-					0, 1, &compute_set, 0, NULL);
-		vkCmdDispatch(cbuf, 1, 1, 1);
-
-                res = vkEndCommandBuffer(cbuf);
+                res = vkEndCommandBuffer(graphics_cbuf);
                 assert(res == VK_SUCCESS);
 
                 // Wait until whoever is rendering to the image is done
@@ -681,14 +713,19 @@ int main() {
                 image_fences[image_idx] = sync_set->render_fence;
 
                 // Submit
-                VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+                VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+						      VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
+		VkSemaphore wait_sems[] = {sync_set->acquire_sem, sync_set->compute_sem};
+		assert(sizeof(wait_stages) / sizeof(wait_stages[0])
+		       == sizeof(wait_sems) / sizeof(wait_sems[0]));
+
                 VkSubmitInfo submit_info = {0};
                 submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-                submit_info.waitSemaphoreCount = 1;
-                submit_info.pWaitSemaphores = &sync_set->acquire_sem;
-                submit_info.pWaitDstStageMask = &wait_stage;
+                submit_info.waitSemaphoreCount = sizeof(wait_sems) / sizeof(wait_sems[0]);
+                submit_info.pWaitSemaphores = wait_sems;
+                submit_info.pWaitDstStageMask = wait_stages;
                 submit_info.commandBufferCount = 1;
-                submit_info.pCommandBuffers = &cbuf;
+                submit_info.pCommandBuffers = &graphics_cbuf;
                 submit_info.signalSemaphoreCount = 1;
                 submit_info.pSignalSemaphores = &sync_set->render_sem;
 
@@ -714,7 +751,7 @@ int main() {
 
 	double elapsed = timer_get_elapsed(&start_time);
         double fps = (double) frame_ct / elapsed;
-        printf("FPS: %.2f\n", fps);
+        printf("FPS: %.2f, total frames: %d\n", fps, frame_ct);
         printf("Average collision time: %.2f ms\n", total_collision_time / frame_ct * 1000);
 
         vkDeviceWaitIdle(base.device);
@@ -748,6 +785,9 @@ int main() {
 	buffer_destroy(base.device, &compute_buf);
 	buffer_destroy(base.device, &compute_buf_staging);
 	buffer_destroy(base.device, &compute_buf_reader);
+
+	vkDestroyFence(base.device, compute_fence, NULL);
+
         base_destroy(&base);
 
         glfwTerminate();
