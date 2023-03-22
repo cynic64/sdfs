@@ -12,11 +12,9 @@ layout (push_constant, std140) uniform PushConstants {
        mat4 proj;
 } constants;
 
-layout (std140, set = 0, binding = 0) uniform Uniform {
-	int count;
-	int types[512];
-	mat4 transforms[512];
-} objects;
+layout(std140, binding = 0) buffer Stuff {
+	int x;
+};
 
 struct RayShot {
 	vec3 closest;
@@ -124,6 +122,7 @@ float sd_pyramid( vec3 p, float h) {
 }
 
 float scene_sdf(vec3 point) {
+	/*
 	float min_dist = 99999999;
 	int type = objects.types[obj_idx];
 	vec3 point_rel = (inverse(objects.transforms[obj_idx]) * vec4(point, 1)).xyz;
@@ -143,6 +142,8 @@ float scene_sdf(vec3 point) {
 	if (dist < min_dist) min_dist = dist;
 
 	return min_dist;
+	*/
+	return 0;
 }
 
 RayShot raymarch(vec3 ray_origin, vec3 ray_dir, float initial_depth) {
@@ -182,6 +183,7 @@ vec3 calc_normal(vec3 point) {
 
 void main()
 {
+	/*
 	vec3 ray_origin = constants.eye.xyz;
 	vec3 ray_dir = normalize(pos_worldspace - ray_origin);
 
@@ -196,4 +198,6 @@ void main()
 	}
 	//out_color = vec4(vec3(objects.types[obj_idx] * 0.2) + 0.1, 1);
 	//out_color = vec4((inverse(objects.transforms[obj_idx]) * vec4(pos_worldspace, 1)).xyz * 0.5 + 0.5, 1);
+	*/
+	out_color = vec4(1);
 }

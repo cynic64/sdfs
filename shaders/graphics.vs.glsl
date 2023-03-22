@@ -12,11 +12,9 @@ layout (push_constant, std140) uniform PushConstants {
        mat4 proj;
 } constants;
 
-layout (std140, set = 0, binding = 0) uniform Uniform {
-	int count;
-	int types[512];
-	mat4 transforms[512];
-} objects;
+layout(std140, binding = 0) buffer Stuff {
+	int x;
+};
 
 vec3 vertices[36] = vec3[](
     vec3(-1.0f,-1.0f,-1.0f),
@@ -69,8 +67,11 @@ void main() {
 	int vertex_count = 36;
 	obj_idx = gl_VertexIndex / vertex_count;
 
+	/*
         pos_worldspace = (objects.transforms[obj_idx]
 		       * vec4(vertices[gl_VertexIndex % vertex_count], 1)).xyz;
+		       */
+        pos_worldspace = vertices[gl_VertexIndex % vertex_count];
 
 	vec4 pos_screenspace = constants.proj * constants.view * vec4(pos_worldspace, 1);
 

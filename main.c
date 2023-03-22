@@ -74,7 +74,6 @@ struct StorageData {
 // This stuff exists for every concurrent frame
 struct SyncSet {
         VkFence render_fence;
-	VkFence compute_fence;
         VkSemaphore acquire_sem;
 	// Signalled when compute shader finishes. Graphics submission waits on this and
 	// acquire_sem.
@@ -84,7 +83,6 @@ struct SyncSet {
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
         fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->render_fence);
-        fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->compute_fence);
         semaphore_create(device, &sync_set->acquire_sem);
         semaphore_create(device, &sync_set->compute_sem);
         semaphore_create(device, &sync_set->render_sem);
@@ -92,7 +90,6 @@ void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
 
 void sync_set_destroy(VkDevice device, struct SyncSet* sync_set) {
 	vkDestroyFence(device, sync_set->render_fence, NULL);
-	vkDestroyFence(device, sync_set->compute_fence, NULL);
 	vkDestroySemaphore(device, sync_set->acquire_sem, NULL);
 	vkDestroySemaphore(device, sync_set->compute_sem, NULL);
 	vkDestroySemaphore(device, sync_set->render_sem, NULL);
@@ -287,14 +284,14 @@ int main() {
 			 SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
         // Load shaders
-        VkShaderModule boxes_vs, boxes_fs;
-        VkPipelineShaderStageCreateInfo boxes_shaders[2] = {0};
+        VkShaderModule graphics_vs, graphics_fs;
+        VkPipelineShaderStageCreateInfo graphics_shaders[2] = {0};
 
-	// Bounding boxes
-	load_shader(base.device, "shaders/bounding_boxes.vs.spv",
-		    &boxes_vs, VK_SHADER_STAGE_VERTEX_BIT, &boxes_shaders[0]);
-	load_shader(base.device, "shaders/bounding_boxes.fs.spv",
-		    &boxes_fs, VK_SHADER_STAGE_FRAGMENT_BIT, &boxes_shaders[1]);
+	// Graphics shaders
+	load_shader(base.device, "shaders/graphics.vs.spv",
+		    &graphics_vs, VK_SHADER_STAGE_VERTEX_BIT, &graphics_shaders[0]);
+	load_shader(base.device, "shaders/graphics.fs.spv",
+		    &graphics_fs, VK_SHADER_STAGE_FRAGMENT_BIT, &graphics_shaders[1]);
 
 	// Compute shader
 	VkShaderModule compute_shader;
@@ -306,131 +303,104 @@ int main() {
 	VkRenderPass rpass;
 	rpass_color_depth(base.device, swapchain.format, DEPTH_FORMAT, &rpass);
 
-	// Allocate uniform buffer
-	struct Buffer uniform_buf, uniform_buf_staging;
-	buffer_create_staged(base.phys_dev, base.device, base.queue, base.cpool,
-			     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-			     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			     sizeof(struct Uniform), NULL, &uniform_buf, &uniform_buf_staging);
-
-	struct Uniform* uniform_data;
-	VkResult res = vkMapMemory(base.device, uniform_buf_staging.mem, 0, sizeof(struct Uniform),
-				   0, (void **) &uniform_data);
-	assert(res == VK_SUCCESS);
-
-	// Write to uniform buffer
-	uniform_data->count = 4;
-	// Sphere
-	uniform_data->types[4 * 0] = 0;
-	glm_translate_make(uniform_data->transforms[0], (vec3) {0, 0, 0});
-	glm_scale(uniform_data->transforms[0], (vec3) {2, 2, 2});
-
-	// Cube
-	uniform_data->types[4 * 1] = 1;
-	// Note that these happen in the reverse order, the scale is done first. Don't know why,
-	// something complicated and mathematical.
-	glm_translate_make(uniform_data->transforms[1], (vec3) {0, 3, 0});
-	glm_scale(uniform_data->transforms[1], (vec3) {2, 2, 2});
-
-	// Fractal
-	uniform_data->types[4 * 2] = 2;
-	glm_translate_make(uniform_data->transforms[2], (vec3) {6, 0, 0});
-	glm_scale(uniform_data->transforms[2], (vec3) {3, 3, 3});
-
-	// Cone
-	uniform_data->types[4 * 3] = 4;
-	//glm_translate_make(uniform_data->transforms[3], (vec3) {12, 0, 0});
-	vec3 normal = {0.577, 0.577, 0.577};
-	normal_matrix(normal, uniform_data->transforms[3]);
-	glm_translated(uniform_data->transforms[3], (vec3) {12, 0, 0});
-
-	// Allocate storage buffer for compute shader
-	struct Buffer compute_buf, compute_buf_staging, compute_buf_reader;
+	// Allocate storage buffers for compute shader
+	struct Buffer compute_in_bufs[CONCURRENT_FRAMES], compute_out_bufs[CONCURRENT_FRAMES];
+	struct Buffer compute_buf_staging, compute_buf_reader;
 	struct StorageData compute_buf_initial_data = {0};
-	buffer_create_staged(base.phys_dev, base.device, base.queue, base.cpool,
-			     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-			     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			     sizeof(struct StorageData), &compute_buf_initial_data,
-			     &compute_buf, &compute_buf_staging);
+	// Staging buffer
+	buffer_create(base.phys_dev, base.device,
+		      VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+		      sizeof(struct StorageData), &compute_buf_staging);
+
+	// Actual storage buffers
+	for (int i = 0; i < CONCURRENT_FRAMES; i++) {
+		buffer_create(base.phys_dev, base.device,
+			    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			    sizeof(struct StorageData), &compute_in_bufs[i]);
+		buffer_create(base.phys_dev, base.device,
+			    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			    sizeof(struct StorageData), &compute_out_bufs[i]);
+	}
+
 	// This is so we can read data back out
 	buffer_create(base.phys_dev, base.device,
 		      VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 		      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 		      sizeof(struct StorageData), &compute_buf_reader);
 
-	// Descriptor info for uniform buffer
-	struct DescriptorInfo uniform_desc = {0};
-	uniform_desc.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-	uniform_desc.shader_stage_flags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-	uniform_desc.buffer.buffer = uniform_buf.handle;
-	uniform_desc.buffer.range = VK_WHOLE_SIZE;
+	// Descriptor info for compute input buffer (corresponds to compute_bufs[0]);
+	struct DescriptorInfo compute_in_desc = {0};
+	compute_in_desc.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	compute_in_desc.stage = VK_SHADER_STAGE_COMPUTE_BIT;
 
-	// Descriptor info for storage buffer
-	struct DescriptorInfo storage_desc = {0};
-	storage_desc.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-	storage_desc.shader_stage_flags = VK_SHADER_STAGE_COMPUTE_BIT;
-	storage_desc.buffer.buffer = compute_buf.handle;
-	storage_desc.buffer.range = VK_WHOLE_SIZE;
+	struct DescriptorInfo compute_out_desc = {0};
+	compute_out_desc.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	compute_out_desc.stage = VK_SHADER_STAGE_COMPUTE_BIT
+		| VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
 	// Create descriptor pool
-	struct DescriptorInfo descriptors[] = {uniform_desc, storage_desc};
+	// Gotta be honest I have no idea what I'm doing here
+	VkDescriptorPoolSize dpool_sizes[1] = {0};
+	dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	// I think it has to be 3 for each CONCURRENT_FRAME because there's the two descriptors for
+	// the compute stage and the descriptor for the graphics stage
+	dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES*3;
+
+	VkDescriptorPoolCreateInfo dpool_info = {0};
+	dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+	dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
+	dpool_info.pPoolSizes = dpool_sizes;
+	// Need two sets per CONCURRENT_FRAME because there's 1 for compute and 1 for graphics.
+	dpool_info.maxSets = 2*CONCURRENT_FRAMES;
+
 	VkDescriptorPool dpool;
-	dpool_create(base.device, 2, sizeof(descriptors) / sizeof(descriptors[0]), descriptors, &dpool);
-	
-	// Create set for uniform buffer
-	struct SetInfo set_info = {0};
-	set_info.desc_ct = 1;
-	set_info.descs = &uniform_desc;
+	VkResult res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
+	assert(res == VK_SUCCESS);
 
-	VkDescriptorSetLayout set_layout;
-	set_layout_create(base.device, &set_info, &set_layout);
-
-	VkDescriptorSet set;
-	set_create(base.device, dpool, set_layout, &set_info, &set);
-
-	// Create set for storage buffer
+	// Now make the sets
+	struct DescriptorInfo compute_descs[] = {compute_in_desc, compute_out_desc};
 	struct SetInfo compute_set_info = {0};
-	compute_set_info.desc_ct = 1;
-	compute_set_info.descs = &storage_desc;
+	compute_set_info.desc_ct = sizeof(compute_descs) / sizeof(compute_descs[0]);
+	compute_set_info.descs = compute_descs;
 
+	struct SetInfo graphics_set_info = {0};
+	graphics_set_info.desc_ct = 1;
+	graphics_set_info.descs = &compute_out_desc;
+	
 	VkDescriptorSetLayout compute_set_layout;
 	set_layout_create(base.device, &compute_set_info, &compute_set_layout);
 
-	VkDescriptorSet compute_set;
-	set_create(base.device, dpool, compute_set_layout, &compute_set_info, &compute_set);
+	VkDescriptorSetLayout graphics_set_layout;
+	set_layout_create(base.device, &graphics_set_info, &graphics_set_layout);
 
-        // Graphics pipeline
-	// Layout
-	VkPushConstantRange pushc_range = {0};
-        pushc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-        pushc_range.size = sizeof(struct PushConstants);
+	VkDescriptorSet compute_sets[CONCURRENT_FRAMES];
+	VkDescriptorSet graphics_sets[CONCURRENT_FRAMES];
 
-        VkPipelineLayoutCreateInfo pipe_layout_info = {0};
-        pipe_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipe_layout_info.pushConstantRangeCount = 1;
-        pipe_layout_info.pPushConstantRanges = &pushc_range;
-	pipe_layout_info.setLayoutCount = 1;
-	pipe_layout_info.pSetLayouts = &set_layout;
+	for (int i = 0; i < CONCURRENT_FRAMES; i++) {
+		// Set for compute
+		union SetHandle compute_buffers[2] = {0};
+		compute_buffers[0].buffer.buffer = compute_in_bufs[i].handle;
+		compute_buffers[0].buffer.range = VK_WHOLE_SIZE;
+		compute_buffers[1].buffer.buffer = compute_out_bufs[i].handle;
+		compute_buffers[1].buffer.range = VK_WHOLE_SIZE;
+		assert(sizeof(compute_buffers) / sizeof(compute_buffers[0])
+		       == compute_set_info.desc_ct);
 
-        VkPipelineLayout pipe_layout;
-        res = vkCreatePipelineLayout(base.device, &pipe_layout_info, NULL,
-				     &pipe_layout);
-        assert(res == VK_SUCCESS);
+		set_create(base.device, dpool, compute_set_layout, &compute_set_info, compute_buffers,
+			   &compute_sets[i]);
 
-        // Actual pipeline
-        struct PipelineSettings pipe_settings = PIPELINE_SETTINGS_DEFAULT;
-	pipe_settings.depth.depthTestEnable = VK_TRUE;
-	pipe_settings.depth.depthWriteEnable = VK_TRUE;
-	pipe_settings.depth.depthCompareOp = VK_COMPARE_OP_LESS;
-	pipe_settings.rasterizer.cullMode = VK_CULL_MODE_NONE;
-
-	VkPipeline boxes_pipe;
-	pipeline_create(base.device, &pipe_settings,
-	                sizeof(boxes_shaders) / sizeof(boxes_shaders[0]), boxes_shaders,
-	                pipe_layout, rpass, 0, &boxes_pipe);
-
-        vkDestroyShaderModule(base.device, boxes_vs, NULL);
-        vkDestroyShaderModule(base.device, boxes_fs, NULL);
+		// Set for graphics
+		union SetHandle graphics_buffers[1] = {0};
+		graphics_buffers[0].buffer.buffer = compute_out_bufs[i].handle;
+		graphics_buffers[0].buffer.range = VK_WHOLE_SIZE;
+		assert(sizeof(graphics_buffers) / sizeof(graphics_buffers[0])
+		       == graphics_set_info.desc_ct);
+		set_create(base.device, dpool, graphics_set_layout, &graphics_set_info,
+			   graphics_buffers, &graphics_sets[i]);
+	}
 
 	// Compute pipeline
 	// Layout
@@ -455,6 +425,39 @@ int main() {
 	assert(res == VK_SUCCESS);
 
 	vkDestroyShaderModule(base.device, compute_shader, NULL);
+
+        // Graphics pipeline
+	// Layout
+	VkPushConstantRange pushc_range = {0};
+        pushc_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        pushc_range.size = sizeof(struct PushConstants);
+
+        VkPipelineLayoutCreateInfo pipe_layout_info = {0};
+        pipe_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipe_layout_info.pushConstantRangeCount = 1;
+        pipe_layout_info.pPushConstantRanges = &pushc_range;
+	pipe_layout_info.setLayoutCount = 1;
+	pipe_layout_info.pSetLayouts = &graphics_set_layout;
+
+        VkPipelineLayout graphics_pipe_layout;
+        res = vkCreatePipelineLayout(base.device, &pipe_layout_info, NULL,
+				     &graphics_pipe_layout);
+        assert(res == VK_SUCCESS);
+
+        // Actual pipeline
+        struct PipelineSettings graphics_pipe_settings = PIPELINE_SETTINGS_DEFAULT;
+	graphics_pipe_settings.depth.depthTestEnable = VK_TRUE;
+	graphics_pipe_settings.depth.depthWriteEnable = VK_TRUE;
+	graphics_pipe_settings.depth.depthCompareOp = VK_COMPARE_OP_LESS;
+	graphics_pipe_settings.rasterizer.cullMode = VK_CULL_MODE_NONE;
+
+	VkPipeline graphics_pipe;
+	pipeline_create(base.device, &graphics_pipe_settings,
+	                sizeof(graphics_shaders) / sizeof(graphics_shaders[0]), graphics_shaders,
+	                graphics_pipe_layout, rpass, 0, &graphics_pipe);
+
+        vkDestroyShaderModule(base.device, graphics_vs, NULL);
+        vkDestroyShaderModule(base.device, graphics_fs, NULL);
 
         // Framebuffers, we'll create them later
         VkFramebuffer* framebuffers = malloc(swapchain.image_ct * sizeof(framebuffers[0]));
@@ -582,34 +585,11 @@ int main() {
                 VkCommandBuffer graphics_cbuf = graphics_cbufs[frame_idx],
 			compute_cbuf = compute_cbufs[frame_idx];
 
-                // Wait for the render process using these sync objects to finish rendering
+                // Wait for the render process using these sync objects to finish rendering. There's
+                // no need to explicitly wait for compute to finish because render waits for compute
+                // anyway.
                 res = vkWaitForFences(base.device, 1, &sync_set->render_fence, VK_TRUE, UINT64_MAX);
                 assert(res == VK_SUCCESS);
-
-		struct timespec collision_start_time = timer_start();
-		uniform_data->count = 4;
-		/*
-		int iter_count = calc_intersect(uniform_data, (vec3) {0, 0, 0},
-						-2, -2, -2, 2, 2, 2, 0);
-		*/
-		total_collision_time += timer_get_elapsed(&collision_start_time);
-
-		// Wait for compute shader to finish
-		vkWaitForFences(base.device, 1, &sync_set->compute_fence, VK_TRUE, UINT64_MAX);
-		vkResetFences(base.device, 1, &sync_set->compute_fence);
-
-		// Check output of compute shader
-		buffer_copy(base.queue, compute_cbuf, compute_buf.handle, compute_buf_reader.handle,
-			    sizeof(struct StorageData));
-		struct StorageData* compute_buf_mapped;
-		vkMapMemory(base.device, compute_buf_reader.mem, 0, sizeof(*compute_buf_mapped), 0,
-			    (void **) &compute_buf_mapped);
-		printf("x: %d\n", compute_buf_mapped->x);
-		vkUnmapMemory(base.device, compute_buf_reader.mem);
-
-		// Update uniform buffer
-		buffer_copy(base.queue, compute_cbuf, uniform_buf_staging.handle, uniform_buf.handle,
-			    sizeof(struct Uniform));
 
                 // Record compute dispatch
                 vkResetCommandBuffer(compute_cbuf, 0);
@@ -617,7 +597,7 @@ int main() {
 		vkCmdBindPipeline(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipe);
 		vkCmdBindDescriptorSets(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
 					compute_pipe_layout, 0, 1,
-					&compute_set, 0, NULL);
+					&compute_sets[frame_idx], 0, NULL);
 		vkCmdDispatch(compute_cbuf, 1, 1, 1);
                 res = vkEndCommandBuffer(compute_cbuf);
                 assert(res == VK_SUCCESS);
@@ -629,7 +609,7 @@ int main() {
 		compute_submit_info.signalSemaphoreCount = 1;
 		compute_submit_info.pSignalSemaphores = &sync_set->compute_sem;
 
-		res = vkQueueSubmit(base.queue, 1, &compute_submit_info, sync_set->compute_fence);
+		res = vkQueueSubmit(base.queue, 1, &compute_submit_info, NULL);
 		assert(res == VK_SUCCESS);
 
                 // Acquire an image
@@ -648,15 +628,15 @@ int main() {
                 VkClearValue clear_vals[] = {{{{0.0F, 0.0F, 0.0F, 1.0F}}},
                                              {{{1.0F}}}};
 
-                VkRenderPassBeginInfo cbuf_rpass_info = {0};
-                cbuf_rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-                cbuf_rpass_info.renderPass = rpass;
-                cbuf_rpass_info.framebuffer = framebuffers[image_idx];
-                cbuf_rpass_info.renderArea.extent.width = swapchain.width;
-                cbuf_rpass_info.renderArea.extent.height = swapchain.height;
-                cbuf_rpass_info.clearValueCount = sizeof(clear_vals) / sizeof(clear_vals[0]);
-                cbuf_rpass_info.pClearValues = clear_vals;
-                vkCmdBeginRenderPass(graphics_cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
+                VkRenderPassBeginInfo rpass_begin = {0};
+                rpass_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                rpass_begin.renderPass = rpass;
+                rpass_begin.framebuffer = framebuffers[image_idx];
+                rpass_begin.renderArea.extent.width = swapchain.width;
+                rpass_begin.renderArea.extent.height = swapchain.height;
+                rpass_begin.clearValueCount = sizeof(clear_vals) / sizeof(clear_vals[0]);
+                rpass_begin.pClearValues = clear_vals;
+                vkCmdBeginRenderPass(graphics_cbuf, &rpass_begin, VK_SUBPASS_CONTENTS_INLINE);
 
                 VkViewport viewport = {0};
                 viewport.width = swapchain.width;
@@ -686,14 +666,15 @@ int main() {
                 glm_perspective(1.0F, (float) swapchain.width / (float) swapchain.height, 0.1F,
 				10000.0F, pushc_data.proj);
 
-                vkCmdBindPipeline(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, boxes_pipe);
-		vkCmdPushConstants(graphics_cbuf, pipe_layout,
+                vkCmdBindPipeline(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipe);
+		vkCmdPushConstants(graphics_cbuf, graphics_pipe_layout,
 				   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		                   0, sizeof(struct PushConstants), &pushc_data);
-		vkCmdBindDescriptorSets(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_layout,
-					0, 1, &set, 0, NULL);
+		vkCmdBindDescriptorSets(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
+					graphics_pipe_layout,
+					0, 1, &graphics_sets[frame_idx], 0, NULL);
 
-                vkCmdDraw(graphics_cbuf, 36 * uniform_data->count, 1, 0, 0);
+                vkCmdDraw(graphics_cbuf, 36, 1, 0, 0);
 
                 vkCmdEndRenderPass(graphics_cbuf);
 		
@@ -715,8 +696,9 @@ int main() {
                 VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 						      VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
 		VkSemaphore wait_sems[] = {sync_set->acquire_sem, sync_set->compute_sem};
-		assert(sizeof(wait_stages) / sizeof(wait_stages[0])
-		       == sizeof(wait_sems) / sizeof(wait_sems[0]));
+		static_assert(sizeof(wait_stages) / sizeof(wait_stages[0])
+			      == sizeof(wait_sems) / sizeof(wait_sems[0]),
+			      "Must have same # of wait stages and wait semaphores");
 
                 VkSubmitInfo submit_info = {0};
                 submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -755,10 +737,10 @@ int main() {
 
         vkDeviceWaitIdle(base.device);
 
-        vkDestroyPipelineLayout(base.device, pipe_layout, NULL);
+        vkDestroyPipelineLayout(base.device, graphics_pipe_layout, NULL);
         vkDestroyPipelineLayout(base.device, compute_pipe_layout, NULL);
 
-        vkDestroyPipeline(base.device, boxes_pipe, NULL);
+        vkDestroyPipeline(base.device, graphics_pipe, NULL);
         vkDestroyPipeline(base.device, compute_pipe, NULL);
 
         vkDestroyRenderPass(base.device, rpass, NULL);
@@ -775,15 +757,16 @@ int main() {
         }
 
 	vkDestroyDescriptorPool(base.device, dpool, NULL);
-	vkDestroyDescriptorSetLayout(base.device, set_layout, NULL);
-	vkUnmapMemory(base.device, uniform_buf_staging.mem);
-	buffer_destroy(base.device, &uniform_buf);
-	buffer_destroy(base.device, &uniform_buf_staging);
 
 	vkDestroyDescriptorSetLayout(base.device, compute_set_layout, NULL);
-	buffer_destroy(base.device, &compute_buf);
+	vkDestroyDescriptorSetLayout(base.device, graphics_set_layout, NULL);
+
 	buffer_destroy(base.device, &compute_buf_staging);
 	buffer_destroy(base.device, &compute_buf_reader);
+	for (int i = 0; i < CONCURRENT_FRAMES; i++) {
+		buffer_destroy(base.device, &compute_in_bufs[i]);
+		buffer_destroy(base.device, &compute_out_bufs[i]);
+	}
 
         base_destroy(&base);
 
