@@ -2,6 +2,7 @@
 #include "external/cglm/include/cglm/mat4.h"
 #include "external/cglm/include/cglm/vec3.h"
 #include "external/render-c/src/cbuf.h"
+#include "external/render-c/src/mem.h"
 #include <vulkan/vulkan_core.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -57,7 +58,7 @@ struct PushConstants {
 
 #define MAX_OBJ_COUNT 512
 
-struct Uniform {
+struct StorageData {
 	int32_t count;
 
 	// Shader pads everything to 32 bytes, even arrays :(
@@ -65,10 +66,6 @@ struct Uniform {
 
 	// The base box has a side length of 2 (goes from -1 to 1)
 	__attribute__((aligned(16))) mat4 transforms[MAX_OBJ_COUNT];
-};
-
-struct StorageData {
-	int32_t x;
 };
 
 // This stuff exists for every concurrent frame
@@ -167,107 +164,33 @@ void calc_normal(vec3 in, vec3 out) {
     glm_vec3_normalize(out);
 }
 
-int calc_intersect(struct Uniform* uni,
-		   vec3 sphere_pos,
-		   float start_x, float start_y, float start_z,
-		   float end_x, float end_y, float end_z, int depth) {
-	vec3 box_pos = {0, 3, 0};
-	float radius = 2;
 
-	int steps = 2;
-	float cell_width = (end_x - start_x) / steps;
-	float cell_height = (end_y - start_y) / steps;
-	float cell_depth = (end_z - start_z) / steps;
-	assert(cell_width == cell_height && cell_height == cell_depth);
-	// Length of cell's diagonal
-	float margin = sqrtf(cell_width*cell_width*0.25
-			     + cell_height*cell_height*0.25
-			     + cell_depth*cell_depth*0.25);
+void get_init_data(struct StorageData* data) {
+	data->count = 4;
+	// Sphere
+	data->types[4 * 0] = 0;
+	glm_translate_make(data->transforms[0], (vec3) {0, 0, 0});
+	glm_scale(data->transforms[0], (vec3) {2, 2, 2});
 
-	int iter_count = 0;
+	// Cube
+	data->types[4 * 1] = 1;
+	// Note that these happen in the reverse order, the scale is done first. Don't know why,
+	// something complicated and mathematical.
+	glm_translate_make(data->transforms[1], (vec3) {0, 3, 0});
+	glm_scale(data->transforms[1], (vec3) {2, 2, 2});
 
-	for (int x = 0; x < steps; x++) {
-		for (int y = 0; y < steps; y++) {
-			for (int z = 0; z < steps; z++) {
-				vec3 point = {start_x + (x + 0.5)*cell_width,
-				              start_y + (y + 0.5)*cell_height,
-				              start_z + (z + 0.5)*cell_depth};
+	// Fractal
+	data->types[4 * 2] = 2;
+	glm_translate_make(data->transforms[2], (vec3) {6, 0, 0});
+	glm_scale(data->transforms[2], (vec3) {3, 3, 3});
 
-				// Point relative to box's position
-				vec3 box_point;
-				glm_vec3_sub(point, box_pos, box_point);
-				float box_dist = sd_box(box_point, (vec3) {2, 2, 2});
-
-				// Point relative to spheres's position
-				vec3 sphere_point;
-				glm_vec3_sub(point, sphere_pos, sphere_point);
-				float sphere_dist = sd_sphere(sphere_point, radius);
-
-				float max_dist = fmax(sphere_dist, box_dist);
-				float min_dist = fmin(sphere_dist, box_dist);
-				
-				if (max_dist < margin && -min_dist < margin) {
-					if (depth < 2) {
-						iter_count +=
-							calc_intersect(uni,
-								       sphere_pos,
-								       start_x + x*cell_width,
-								       start_y + y*cell_height,
-								       start_z + z*cell_depth,
-								       start_x + (x+1)*cell_width,
-								       start_y + (y+1)*cell_height,
-								       start_z + (z+1)*cell_depth,
-								       depth + 1);
-					} else if (uni->count < MAX_OBJ_COUNT) {
-						vec3 normal;
-						calc_normal(point, normal);
-
-						point[0] -= 4;
-
-						// Box frame
-						uni->types[4 * uni->count] = 3;
-						glm_translate_make(uni->transforms[uni->count], point);
-						glm_scale(uni->transforms[uni->count],
-							  (vec3) {cell_width / 2,
-								  cell_height / 2,
-								  cell_depth / 2});
-						uni->count++;
-
-						// Box showing normal (cones don't scale well for
-						// whatever reason)
-						uni->types[4 * uni->count] = 1;
-						mat4 trans1;
-						glm_translate_make(trans1,
-								   (vec3) {point[0],
-									   point[1],
-									   point[2]});
-						mat4 trans2;
-						glm_translate_make(trans2, (vec3) {0, 2.5, 0});
-						mat4 scale;
-						glm_scale_make(scale,
-							       (vec3) {cell_width / 4,
-								       cell_height / 4,
-								       cell_depth / 4});
-						mat4 norm;
-						normal_matrix(normal, norm);
-						glm_mat4_mulN((mat4*[])
-							      {&trans1, &scale, &norm, &trans2}, 4,
-							      uni->transforms[uni->count]);
-						uni->count++;
-					}
-				}
-
-				iter_count++;
-			}
-		}
-	}
-
-	return iter_count;
+	// Cone
+	data->types[4 * 3] = 4;
+	vec3 normal = {0.577, 0.577, 0.577};
+	normal_matrix(normal, data->transforms[3]);
+	glm_translated(data->transforms[3], (vec3) {12, 0, 0});
 }
-
 int main() {
-	printf("Uniform buffer size: %lu\n", sizeof(struct Uniform));
-	
         glfwInit();
         glfwSetErrorCallback(glfw_error_callback);
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -306,23 +229,35 @@ int main() {
 	// Allocate storage buffers for compute shader
 	struct Buffer compute_in_bufs[CONCURRENT_FRAMES], compute_out_bufs[CONCURRENT_FRAMES];
 	struct Buffer compute_buf_staging, compute_buf_reader;
-	struct StorageData compute_buf_initial_data = {0};
 	// Staging buffer
 	buffer_create(base.phys_dev, base.device,
 		      VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 		      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 		      sizeof(struct StorageData), &compute_buf_staging);
 
+	// Write to staging
+	struct StorageData compute_buf_initial_data = {0};
+	get_init_data(&compute_buf_initial_data);
+	mem_write(base.device, compute_buf_staging.mem, compute_buf_staging.size,
+		  &compute_buf_initial_data);
+
+	VkCommandBuffer copy_cbuf;
+	cbuf_alloc(base.device, base.cpool, &copy_cbuf);
+
 	// Actual storage buffers
 	for (int i = 0; i < CONCURRENT_FRAMES; i++) {
 		buffer_create(base.phys_dev, base.device,
-			    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			    sizeof(struct StorageData), &compute_in_bufs[i]);
 		buffer_create(base.phys_dev, base.device,
-			    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			    sizeof(struct StorageData), &compute_out_bufs[i]);
+
+		buffer_copy(base.queue, copy_cbuf,
+			    compute_buf_staging.handle, compute_in_bufs[i].handle,
+			    sizeof(struct StorageData));
 	}
 
 	// This is so we can read data back out
@@ -674,7 +609,7 @@ int main() {
 					graphics_pipe_layout,
 					0, 1, &graphics_sets[frame_idx], 0, NULL);
 
-                vkCmdDraw(graphics_cbuf, 36, 1, 0, 0);
+                vkCmdDraw(graphics_cbuf, 36 * MAX_OBJ_COUNT, 1, 0, 0);
 
                 vkCmdEndRenderPass(graphics_cbuf);
 		
