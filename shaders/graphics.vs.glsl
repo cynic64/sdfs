@@ -73,7 +73,7 @@ layout (location = 1) out vec3 pos_worldspace;
 void main() {
 	// Figure out which object we are
 	int vertex_count = 36;
-	obj_idx = gl_VertexIndex / vertex_count;
+	obj_idx = gl_InstanceIndex;
 
 	// If this object doesn't actually exist, put it off screen so it gets clipped
 	if (obj_idx >= scene.count) {

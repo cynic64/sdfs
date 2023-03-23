@@ -616,7 +616,7 @@ int main() {
                                         graphics_pipe_layout, 0, 1, &graphics_sets[frame_idx], 0,
                                         NULL);
 
-                vkCmdDraw(graphics_cbuf, 36 * MAX_OBJ_COUNT, 1, 0, 0);
+                vkCmdDraw(graphics_cbuf, 36, MAX_OBJ_COUNT, 0, 0);
 
                 vkCmdEndRenderPass(graphics_cbuf);
 
