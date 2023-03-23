@@ -57,16 +57,17 @@ struct PushConstants {
 };
 
 // Must be the same in ./shaders_include/constants.glsl
-#define MAX_OBJ_COUNT 8192
+#define MAX_OBJ_COUNT 512
 
-struct StorageData {
+struct __attribute__((packed)) Object {
+	int type;
+	__attribute__((aligned(16))) mat4 transform;
+};
+
+struct Scene {
         int32_t count;
 
-        // Shader pads everything to 32 bytes, even arrays :(
-        __attribute__((aligned(16))) int32_t types[MAX_OBJ_COUNT * 4];
-
-        // The base box has a side length of 2 (goes from -1 to 1)
-        __attribute__((aligned(16))) mat4 transforms[MAX_OBJ_COUNT];
+        __attribute__((aligned(16))) struct Object objects[MAX_OBJ_COUNT];
 };
 
 // This stuff exists for every concurrent frame
@@ -165,30 +166,30 @@ void calc_normal(vec3 in, vec3 out) {
         glm_vec3_normalize(out);
 }
 
-void get_init_data(struct StorageData *data) {
+void get_init_data(struct Scene *data) {
         data->count = 4;
         // Sphere
-        data->types[4 * 0] = 0;
-        glm_translate_make(data->transforms[0], (vec3){0, 0, 0});
-        glm_scale(data->transforms[0], (vec3){2, 2, 2});
+        data->objects[0].type = 0;
+        glm_translate_make(data->objects[0].transform, (vec3){0, 0, 0});
+        glm_scale(data->objects[0].transform, (vec3){2, 2, 2});
 
         // Cube
-        data->types[4 * 1] = 1;
+        data->objects[1].type = 1;
         // Note that these happen in the reverse order, the scale is done first. Don't know why,
         // something complicated and mathematical.
-        glm_translate_make(data->transforms[1], (vec3){0, 3, 0});
-        glm_scale(data->transforms[1], (vec3){2, 2, 2});
+        glm_translate_make(data->objects[1].transform, (vec3){0, 3, 0});
+        glm_scale(data->objects[1].transform, (vec3){2, 2, 2});
 
         // Fractal
-        data->types[4 * 2] = 2;
-        glm_translate_make(data->transforms[2], (vec3){6, 0, 0});
-        glm_scale(data->transforms[2], (vec3){3, 3, 3});
+        data->objects[2].type = 2;
+        glm_translate_make(data->objects[2].transform, (vec3){6, 0, 0});
+        glm_scale(data->objects[2].transform, (vec3){3, 3, 3});
 
         // Cone
-        data->types[4 * 3] = 4;
+        data->objects[3].type = 4;
         vec3 normal = {0.577, 0.577, 0.577};
-        normal_matrix(normal, data->transforms[3]);
-        glm_translated(data->transforms[3], (vec3){12, 0, 0});
+        normal_matrix(normal, data->objects[3].transform);
+        glm_translated(data->objects[3].transform, (vec3){12, 0, 0});
 }
 
 int main() {
@@ -233,10 +234,10 @@ int main() {
         // Staging buffer
         buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      sizeof(struct StorageData), &compute_buf_staging);
+                      sizeof(struct Scene), &compute_buf_staging);
 
         // Write to staging
-        struct StorageData compute_buf_initial_data = {0};
+        struct Scene compute_buf_initial_data = {0};
         get_init_data(&compute_buf_initial_data);
         mem_write(base.device, compute_buf_staging.mem, compute_buf_staging.size,
                   &compute_buf_initial_data);
@@ -248,21 +249,21 @@ int main() {
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 buffer_create(base.phys_dev, base.device,
                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct StorageData),
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Scene),
                               &compute_in_bufs[i]);
                 buffer_create(base.phys_dev, base.device,
                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct StorageData),
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Scene),
                               &compute_out_bufs[i]);
 
                 buffer_copy(base.queue, copy_cbuf, compute_buf_staging.handle,
-                            compute_in_bufs[i].handle, sizeof(struct StorageData));
+                            compute_in_bufs[i].handle, sizeof(struct Scene));
         }
 
         // This is so we can read data back out
         buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      sizeof(struct StorageData), &compute_buf_reader);
+                      sizeof(struct Scene), &compute_buf_reader);
 
         // Descriptor info for compute input buffer (corresponds to compute_bufs[0]);
         struct DescriptorInfo compute_in_desc = {0};

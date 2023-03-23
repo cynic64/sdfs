@@ -14,11 +14,15 @@ layout (push_constant, std140) uniform PushConstants {
        mat4 proj;
 } constants;
 
-layout(std140, binding = 0) buffer OutData {
+struct Object {
+	int type;
+	mat4 transform;
+};
+
+layout(std140, binding = 0) buffer Scene {
 	int count;
-	int types[MAX_OBJ_COUNT];
-	mat4 transforms[MAX_OBJ_COUNT];
-} objects;
+	Object objects[];
+} scene;
 
 vec3 vertices[36] = vec3[](
     vec3(-1.0f,-1.0f,-1.0f),
@@ -72,13 +76,13 @@ void main() {
 	obj_idx = gl_VertexIndex / vertex_count;
 
 	// If this object doesn't actually exist, put it off screen so it gets clipped
-	if (obj_idx >= objects.count) {
+	if (obj_idx >= scene.count) {
 		gl_Position = vec4(-100, -100, -100, 1);
 		return;
 	}
 
 	// Otherwise figure out where it goes on screen
-        pos_worldspace = (objects.transforms[obj_idx]
+        pos_worldspace = (scene.objects[obj_idx].transform
 		       * vec4(vertices[gl_VertexIndex % vertex_count], 1)).xyz;
 
 	vec4 pos_screenspace = constants.proj * constants.view * vec4(pos_worldspace, 1);

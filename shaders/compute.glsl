@@ -2,19 +2,22 @@
 
 #include constants.glsl
 
-layout(std140, binding = 0) buffer InData {
+struct Object {
+	int type;
+	mat4 transform;
+};
+
+layout(std140, binding = 0) buffer SceneIn {
 	int count;
-	int types[MAX_OBJ_COUNT];
-	mat4 transforms[MAX_OBJ_COUNT];
+	Object objects[];
 } in_buf;
 
-layout(std140, binding = 1) buffer OutData {
+layout(std140, binding = 1) buffer SceneOut {
 	int count;
-	int types[MAX_OBJ_COUNT];
-	mat4 transforms[MAX_OBJ_COUNT];
+	Object objects[];
 } out_buf;
 
-layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 #include common.glsl
 
@@ -56,13 +59,13 @@ mat4 normal_rotation(vec3 normal) {
 }
 
 void main() {
-	/*
 	for (int i = 0; i < in_buf.count; i++) {
-		out_buf.types[i] = in_buf.types[i];
-		out_buf.transforms[i] = in_buf.transforms[i];
+		out_buf.objects[i].type = in_buf.objects[i].type;
+		out_buf.objects[i].transform = in_buf.objects[i].transform;
 	}
 	out_buf.count = in_buf.count;
-	*/
+
+	/*
 	out_buf.count = 0;
 
 	// Compute intersection between first 2 objects
@@ -79,4 +82,5 @@ void main() {
 						translation(point - vec3(5, 0, 0)) * scale(0.03);
 					out_buf.count++;
 				}
+				*/
 }
