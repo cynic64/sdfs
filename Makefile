@@ -7,7 +7,7 @@ main: shaders main.c external/ shaders/* external/render-c/* external/render-c/s
 	$(CC) $(CFLAGS) $(LIBS) main.c -o main
 
 shaders: shaders/*.glsl
-	./compile_shaders.pl
+	./compile_shaders.py
 
 .PHONY: clean shaders
 

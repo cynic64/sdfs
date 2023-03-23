@@ -1,3 +1,7 @@
 main
 external/render-c-linked
 shaders/*.spv
+*~
+shaders_processed/*
+\#*
+notes.org

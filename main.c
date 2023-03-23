@@ -211,15 +211,15 @@ int main() {
         VkPipelineShaderStageCreateInfo graphics_shaders[2] = {0};
 
         // Graphics shaders
-        load_shader(base.device, "shaders/graphics.vs.spv", &graphics_vs,
+        load_shader(base.device, "shaders_processed/graphics.vs.spv", &graphics_vs,
                     VK_SHADER_STAGE_VERTEX_BIT, &graphics_shaders[0]);
-        load_shader(base.device, "shaders/graphics.fs.spv", &graphics_fs,
+        load_shader(base.device, "shaders_processed/graphics.fs.spv", &graphics_fs,
                     VK_SHADER_STAGE_FRAGMENT_BIT, &graphics_shaders[1]);
 
         // Compute shader
         VkShaderModule compute_shader;
         VkPipelineShaderStageCreateInfo compute_shader_info = {0};
-        load_shader(base.device, "shaders/compute.spv", &compute_shader,
+        load_shader(base.device, "shaders_processed/compute.spv", &compute_shader,
                     VK_SHADER_STAGE_COMPUTE_BIT, &compute_shader_info);
 
         // Render pass
