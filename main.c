@@ -56,6 +56,7 @@ struct PushConstants {
         mat4 proj;
 };
 
+// Must be the same in ./shaders_include/constants.glsl
 #define MAX_OBJ_COUNT 8192
 
 struct StorageData {
@@ -536,7 +537,7 @@ int main() {
                 vkCmdBindDescriptorSets(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
                                         compute_pipe_layout, 0, 1, &compute_sets[frame_idx], 0,
                                         NULL);
-                vkCmdDispatch(compute_cbuf, 1, 1, 1);
+                vkCmdDispatch(compute_cbuf, 10, 10, 10);
                 res = vkEndCommandBuffer(compute_cbuf);
                 assert(res == VK_SUCCESS);
 

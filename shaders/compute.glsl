@@ -14,7 +14,7 @@ layout(std140, binding = 1) buffer OutData {
 	mat4 transforms[MAX_OBJ_COUNT];
 } out_buf;
 
-layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 #include common.glsl
 
@@ -66,9 +66,9 @@ void main() {
 	out_buf.count = 0;
 
 	// Compute intersection between first 2 objects
-	for (float x = -2; x < 2; x += 0.1) {
-		for (float y = -2; y < 2; y += 0.1) {
-			for (float z = -2; z < 2; z += 0.1) {
+	float x = gl_GlobalInvocationID.x * 0.1 - 2;
+	float y = gl_GlobalInvocationID.y * 0.1 - 2;
+	float z = gl_GlobalInvocationID.z * 0.1 - 2;
 				vec3 point = vec3(x, y, z);
 				float dist0 = scene_sdf(in_buf.types[0], in_buf.transforms[0], point);
 				float dist1 = scene_sdf(in_buf.types[1], in_buf.transforms[1], point);
@@ -79,7 +79,4 @@ void main() {
 						translation(point - vec3(5, 0, 0)) * scale(0.03);
 					out_buf.count++;
 				}
-			}
-		}
-	}
 }
