@@ -1,5 +1,7 @@
 #version 450
 
+#include constants.glsl
+
 layout (push_constant, std140) uniform PushConstants {
        vec4 iResolution;
        vec4 iMouse;
@@ -14,8 +16,8 @@ layout (push_constant, std140) uniform PushConstants {
 
 layout(std140, binding = 0) buffer OutData {
 	int count;
-	int types[512];
-	mat4 transforms[512];
+	int types[MAX_OBJ_COUNT];
+	mat4 transforms[MAX_OBJ_COUNT];
 } objects;
 
 vec3 vertices[36] = vec3[](

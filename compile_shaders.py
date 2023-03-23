@@ -35,7 +35,7 @@ for shader in os.listdir(SHADER_DIR):
         elif '.fs.' in shader: stage = 'fragment'
         else: stage = 'compute'
 
-        command = f'glslc -fshader-stage={stage} {processed_path} -o {processed_path}.spv'
+        command = f'glslc -fshader-stage={stage} {processed_path} -o {processed_path[:-len(".glsl")]}.spv'
         print(command)
         os.system(command)
 

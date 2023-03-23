@@ -1,0 +1,1 @@
+#define MAX_OBJ_COUNT 2048

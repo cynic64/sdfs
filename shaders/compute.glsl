@@ -1,24 +1,35 @@
 #version 450
 
+#include constants.glsl
+
 layout(std140, binding = 0) buffer InData {
 	int count;
-	int types[512];
-	mat4 transforms[512];
+	int types[MAX_OBJ_COUNT];
+	mat4 transforms[MAX_OBJ_COUNT];
 } in_buf;
 
 layout(std140, binding = 1) buffer OutData {
 	int count;
-	int types[512];
-	mat4 transforms[512];
+	int types[MAX_OBJ_COUNT];
+	mat4 transforms[MAX_OBJ_COUNT];
 } out_buf;
 
 layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+#include common.glsl
 
 mat4 translation(vec3 offset) {
 	return mat4(1, 0, 0, 0,
 		    0, 1, 0, 0,
 		    0, 0, 1, 0,
 		    offset, 1);
+}
+
+mat4 scale(float s) {
+	return mat4(s, 0, 0, 0,
+		    0, s, 0, 0,
+		    0, 0, s, 0,
+		    0, 0, 0, 1);
 }
 
 // Makes 0 1 0 point in `normal`. `normal` should be normalized.
@@ -45,15 +56,27 @@ mat4 normal_rotation(vec3 normal) {
 }
 
 void main() {
-	int count = 0;
 	for (int i = 0; i < in_buf.count; i++) {
-		out_buf.count = in_buf.count;
 		out_buf.types[i] = in_buf.types[i];
 		out_buf.transforms[i] = in_buf.transforms[i];
-		count++;
 	}
-	out_buf.types[count] = 4;
-	out_buf.transforms[count] = translation(vec3(-3, 1, 2))
-		* normal_rotation(vec3(0, 0, 1));
-	out_buf.count++;
+	out_buf.count = in_buf.count;
+
+	// Compute intersection between first 2 objects
+	for (float x = -4; x < 4; x += 0.2) {
+		for (float y = -4; y < 4; y += 0.2) {
+			for (float z = -4; z < 4; z += 0.2) {
+				vec3 point = vec3(x, y, z);
+				float dist0 = scene_sdf(in_buf.types[0], in_buf.transforms[0], point);
+				float dist1 = scene_sdf(in_buf.types[1], in_buf.transforms[1], point);
+
+				if (dist0 <= 0 && dist1 <= 0 && out_buf.count + 1 < MAX_OBJ_COUNT) {
+					out_buf.types[out_buf.count] = 1;
+					out_buf.transforms[out_buf.count] =
+						translation(point - vec3(5, 0, 0)) * scale(0.05);
+					out_buf.count++;
+				}
+			}
+		}
+	}
 }

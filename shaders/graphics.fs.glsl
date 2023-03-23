@@ -1,5 +1,7 @@
 #version 450
 
+#include constants.glsl
+
 layout (push_constant, std140) uniform PushConstants {
        vec4 iResolution;
        vec4 iMouse;
@@ -14,9 +16,11 @@ layout (push_constant, std140) uniform PushConstants {
 
 layout(std140, binding = 0) buffer OutData {
 	int count;
-	int types[512];
-	mat4 transforms[512];
+	int types[MAX_OBJ_COUNT];
+	mat4 transforms[MAX_OBJ_COUNT];
 } objects;
+
+#include common.glsl
 
 struct RayShot {
 	vec3 closest;
@@ -30,8 +34,6 @@ layout (location = 0) flat in int obj_idx;
 layout (location = 1) in vec3 pos_worldspace;
 
 layout (location = 0) out vec4 out_color;
-
-#include common.glsl
 
 RayShot raymarch(vec3 ray_origin, vec3 ray_dir, float initial_depth) {
 	float threshold = 0.001;
