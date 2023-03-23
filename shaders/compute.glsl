@@ -12,12 +12,12 @@ layout(std140, binding = 0) buffer SceneIn {
 	Object objects[];
 } in_buf;
 
-layout(std140, binding = 1) buffer SceneOut {
-	int count;
-	Object objects[];
+layout(std140, binding = 1) buffer ComputeOut {
+	mat4 debug;
+	vec4 collisions[];
 } out_buf;
 
-layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 #include common.glsl
 
@@ -59,28 +59,23 @@ mat4 normal_rotation(vec3 normal) {
 }
 
 void main() {
-	for (int i = 0; i < in_buf.count; i++) {
-		out_buf.objects[i].type = in_buf.objects[i].type;
-		out_buf.objects[i].transform = in_buf.objects[i].transform;
-	}
-	out_buf.count = in_buf.count;
-
-	/*
-	out_buf.count = 0;
-
 	// Compute intersection between first 2 objects
 	float x = gl_GlobalInvocationID.x * 0.1 - 2;
 	float y = gl_GlobalInvocationID.y * 0.1 - 2;
 	float z = gl_GlobalInvocationID.z * 0.1 - 2;
-				vec3 point = vec3(x, y, z);
-				float dist0 = scene_sdf(in_buf.types[0], in_buf.transforms[0], point);
-				float dist1 = scene_sdf(in_buf.types[1], in_buf.transforms[1], point);
 
-				if (dist0 <= 0 && dist1 <= 0 && out_buf.count + 1 < MAX_OBJ_COUNT) {
-					out_buf.types[out_buf.count] = 1;
-					out_buf.transforms[out_buf.count] =
-						translation(point - vec3(5, 0, 0)) * scale(0.03);
-					out_buf.count++;
-				}
-				*/
+	vec3 point = vec3(x, y, z);
+	float dist0 = scene_sdf(in_buf.objects[0].type, in_buf.objects[0].transform, point);
+	float dist1 = scene_sdf(in_buf.objects[1].type, in_buf.objects[1].transform, point);
+
+	uint index = gl_GlobalInvocationID.x*40*40
+		+ gl_GlobalInvocationID.y*40
+		+ gl_GlobalInvocationID.z;
+	if (dist0 <= 0 && dist1 <= 0) {
+		out_buf.collisions[index] = vec4(1);
+	} else {
+		out_buf.collisions[index] = vec4(0);
+	}
+
+	out_buf.debug = in_buf.objects[0].transform;
 }

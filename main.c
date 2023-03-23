@@ -1,4 +1,5 @@
 #include "external/cglm/include/cglm/affine.h"
+#include "external/cglm/include/cglm/io.h"
 #include "external/cglm/include/cglm/mat4.h"
 #include "external/cglm/include/cglm/vec3.h"
 #include "external/render-c/src/cbuf.h"
@@ -58,10 +59,13 @@ struct PushConstants {
 
 // Must be the same in ./shaders_include/constants.glsl
 #define MAX_OBJ_COUNT 512
+// The compute shader evaluates collisions at positions within a 4x4x4 box. This is how many cubes
+// the box should be divided into along each side (so this is 40^3 cubes total).
+#define COMPUTE_SAMPLE_COUNT 40
 
 struct __attribute__((packed)) Object {
-	int type;
-	__attribute__((aligned(16))) mat4 transform;
+        int type;
+        __attribute__((aligned(16))) mat4 transform;
 };
 
 struct __attribute__((packed)) Scene {
@@ -70,9 +74,20 @@ struct __attribute__((packed)) Scene {
         __attribute__((aligned(16))) struct Object objects[MAX_OBJ_COUNT];
 };
 
+struct __attribute__((packed)) ComputeOutput {
+        __attribute__((aligned(16))) mat4 debug;
+
+        // `w` component is whether a collision happened at that cell at all, xyz force that should
+        // be applied to fix collision.
+        __attribute__((aligned(16)))
+        vec4 collisions[COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT];
+};
+
 // This stuff exists for every concurrent frame
 struct SyncSet {
         VkFence render_fence;
+        // Gotta wait for this before we can add up collision vectors
+        VkFence compute_fence;
         VkSemaphore acquire_sem;
         // Signalled when compute shader finishes. Graphics submission waits on this and
         // acquire_sem.
@@ -82,6 +97,9 @@ struct SyncSet {
 
 void sync_set_create(VkDevice device, struct SyncSet *sync_set) {
         fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->render_fence);
+        // Shouldn't be signalled initially because we always dispatch before waiting, we never wait
+        // on the compute from previous frame
+        fence_create(device, 0, &sync_set->compute_fence);
         semaphore_create(device, &sync_set->acquire_sem);
         semaphore_create(device, &sync_set->compute_sem);
         semaphore_create(device, &sync_set->render_sem);
@@ -89,81 +107,10 @@ void sync_set_create(VkDevice device, struct SyncSet *sync_set) {
 
 void sync_set_destroy(VkDevice device, struct SyncSet *sync_set) {
         vkDestroyFence(device, sync_set->render_fence, NULL);
+        vkDestroyFence(device, sync_set->compute_fence, NULL);
         vkDestroySemaphore(device, sync_set->acquire_sem, NULL);
         vkDestroySemaphore(device, sync_set->compute_sem, NULL);
         vkDestroySemaphore(device, sync_set->render_sem, NULL);
-}
-
-void abs_vec3(vec3 in, vec3 out) {
-        for (int i = 0; i < 3; i++) {
-                out[i] = in[i] > 0 ? in[i] : -in[i];
-        }
-}
-
-float length(vec3 in) {
-        return sqrtf(in[0] * in[0] + in[1] * in[1] + in[2] * in[2]);
-}
-
-float sd_box(vec3 point, vec3 box_size) {
-        vec3 d;
-        abs_vec3(point, d); // d = abs(point)
-        for (int i = 0; i < 3; i++) {
-                // d -= box_size;
-                d[i] -= box_size[i];
-        }
-        vec3 d_max;
-        for (int i = 0; i < 3; i++) {
-                d_max[i] = d[i] > 0 ? d[i] : 0;
-        }
-        return fmin(fmax(d[0], fmax(d[1], d[2])), 0.0) + length(d_max);
-}
-
-float sd_sphere(vec3 point, float radius) {
-        return length(point) - radius;
-}
-
-// Creates a rotation matrix that makes (0, 1, 0) point in the direction of `normal`
-// Expects `normal` to be normalized
-void normal_matrix(vec3 normal, mat4 out) {
-        vec3 perp = {-normal[1], normal[0], 0};
-        vec3 perp2;
-        glm_vec3_cross(normal, perp, perp2);
-        glm_vec3_normalize(perp2);
-        glm_vec3_normalize(perp);
-
-        glm_mat4_identity(out);
-        // This row is where 1 0 0 ends up
-        memcpy(out[0], perp, sizeof(vec3));
-        // This is where 0 1 0 ends up
-        memcpy(out[1], normal, sizeof(vec3));
-        // This is where 0 0 1 ends up
-        memcpy(out[2], perp2, sizeof(vec3));
-}
-
-void calc_normal(vec3 in, vec3 out) {
-        const float h = 0.0002;
-
-        vec3 a_point = {in[0] + h, in[1] - h, in[2] - h};
-        float a_dist = sd_sphere(a_point, 2);
-        vec3 a_vec = {+a_dist, -a_dist, -a_dist};
-
-        vec3 b_point = {in[0] - h, in[1] - h, in[2] + h};
-        float b_dist = sd_sphere(b_point, 2);
-        vec3 b_vec = {-b_dist, -b_dist, +b_dist};
-
-        vec3 c_point = {in[0] - h, in[1] + h, in[2] - h};
-        float c_dist = sd_sphere(c_point, 2);
-        vec3 c_vec = {-c_dist, +c_dist, -c_dist};
-
-        vec3 d_point = {in[0] + h, in[1] + h, in[2] + h};
-        float d_dist = sd_sphere(d_point, 2);
-        vec3 d_vec = {+d_dist, +d_dist, +d_dist};
-
-        out[0] = a_vec[0] + b_vec[0] + c_vec[0] + d_vec[0];
-        out[1] = a_vec[1] + b_vec[1] + c_vec[1] + d_vec[1];
-        out[2] = a_vec[2] + b_vec[2] + c_vec[2] + d_vec[2];
-
-        glm_vec3_normalize(out);
 }
 
 void get_init_data(struct Scene *data) {
@@ -175,8 +122,8 @@ void get_init_data(struct Scene *data) {
 
         // Cube
         data->objects[1].type = 1;
-        // Note that these happen in the reverse order, the scale is done first. Don't know why,
-        // something complicated and mathematical.
+        // Note that these happen in the reverse order, the scale is done first. It's like how when
+        // you apply model-view-projection in vertex shader you do P*V*M*pos.
         glm_translate_make(data->objects[1].transform, (vec3){0, 3, 0});
         glm_scale(data->objects[1].transform, (vec3){2, 2, 2});
 
@@ -187,9 +134,7 @@ void get_init_data(struct Scene *data) {
 
         // Cone
         data->objects[3].type = 4;
-        vec3 normal = {0.577, 0.577, 0.577};
-        normal_matrix(normal, data->objects[3].transform);
-        glm_translated(data->objects[3].transform, (vec3){12, 0, 0});
+        glm_translate_make(data->objects[3].transform, (vec3){12, 0, 0});
 }
 
 int main() {
@@ -229,41 +174,49 @@ int main() {
         rpass_color_depth(base.device, swapchain.format, DEPTH_FORMAT, &rpass);
 
         // Allocate storage buffers for compute shader
-        struct Buffer compute_in_bufs[CONCURRENT_FRAMES], compute_out_bufs[CONCURRENT_FRAMES];
-        struct Buffer compute_buf_staging, compute_buf_reader;
+        struct Buffer compute_in_bufs[CONCURRENT_FRAMES], compute_out_bufs[CONCURRENT_FRAMES],
+                graphics_in_bufs[CONCURRENT_FRAMES];
+        struct Buffer staging, compute_buf_reader;
         // Staging buffer
         buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      sizeof(struct Scene), &compute_buf_staging);
+                      sizeof(struct Scene), &staging);
 
-        // Write to staging
-        struct Scene compute_buf_initial_data = {0};
-        get_init_data(&compute_buf_initial_data);
-        mem_write(base.device, compute_buf_staging.mem, compute_buf_staging.size,
-                  &compute_buf_initial_data);
+        // Initialize staging
+        struct Scene *scene_data;
+        vkMapMemory(base.device, staging.mem, 0, sizeof(struct Scene), 0, (void **)&scene_data);
+        get_init_data(scene_data);
 
         VkCommandBuffer copy_cbuf;
         cbuf_alloc(base.device, base.cpool, &copy_cbuf);
 
         // Actual storage buffers
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
+                // Compute shader takes Scene as input...
                 buffer_create(base.phys_dev, base.device,
                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Scene),
                               &compute_in_bufs[i]);
+                // And outputs ComputeOutput.
+                buffer_create(base.phys_dev, base.device,
+                              VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                      VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct ComputeOutput),
+                              &compute_out_bufs[i]);
+
+                // Graphics shader takes Scene as input, we'll fill it with the latest data just
+                // before drawing
                 buffer_create(base.phys_dev, base.device,
                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Scene),
-                              &compute_out_bufs[i]);
-
-                buffer_copy(base.queue, copy_cbuf, compute_buf_staging.handle,
-                            compute_in_bufs[i].handle, sizeof(struct Scene));
+                              &graphics_in_bufs[i]);
         }
 
         // This is so we can read data back out
         buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      sizeof(struct Scene), &compute_buf_reader);
+                      sizeof(struct ComputeOutput), &compute_buf_reader);
 
         // Descriptor info for compute input buffer (corresponds to compute_bufs[0]);
         struct DescriptorInfo compute_in_desc = {0};
@@ -272,8 +225,11 @@ int main() {
 
         struct DescriptorInfo compute_out_desc = {0};
         compute_out_desc.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        compute_out_desc.stage = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT |
-                                 VK_SHADER_STAGE_FRAGMENT_BIT;
+        compute_out_desc.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        struct DescriptorInfo graphics_in_desc = {0};
+        graphics_in_desc.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        graphics_in_desc.stage = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
         // Create descriptor pool
         // Gotta be honest I have no idea what I'm doing here
@@ -302,7 +258,7 @@ int main() {
 
         struct SetInfo graphics_set_info = {0};
         graphics_set_info.desc_ct = 1;
-        graphics_set_info.descs = &compute_out_desc;
+        graphics_set_info.descs = &graphics_in_desc;
 
         VkDescriptorSetLayout compute_set_layout;
         set_layout_create(base.device, &compute_set_info, &compute_set_layout);
@@ -328,7 +284,7 @@ int main() {
 
                 // Set for graphics
                 union SetHandle graphics_buffers[1] = {0};
-                graphics_buffers[0].buffer.buffer = compute_out_bufs[i].handle;
+                graphics_buffers[0].buffer.buffer = graphics_in_bufs[i].handle;
                 graphics_buffers[0].buffer.range = VK_WHOLE_SIZE;
                 assert(sizeof(graphics_buffers) / sizeof(graphics_buffers[0]) ==
                        graphics_set_info.desc_ct);
@@ -531,6 +487,10 @@ int main() {
                 res = vkWaitForFences(base.device, 1, &sync_set->render_fence, VK_TRUE, UINT64_MAX);
                 assert(res == VK_SUCCESS);
 
+                // Copy latest data to compute shader input
+                buffer_copy(base.queue, copy_cbuf, staging.handle,
+                            compute_in_bufs[frame_idx].handle, sizeof(struct Scene));
+
                 // Record compute dispatch
                 vkResetCommandBuffer(compute_cbuf, 0);
                 cbuf_begin_onetime(compute_cbuf);
@@ -549,7 +509,7 @@ int main() {
                 compute_submit_info.signalSemaphoreCount = 1;
                 compute_submit_info.pSignalSemaphores = &sync_set->compute_sem;
 
-                res = vkQueueSubmit(base.queue, 1, &compute_submit_info, NULL);
+                res = vkQueueSubmit(base.queue, 1, &compute_submit_info, sync_set->compute_fence);
                 assert(res == VK_SUCCESS);
 
                 // Acquire an image
@@ -629,7 +589,51 @@ int main() {
                                         UINT64_MAX);
                 }
 
-                // Reset fence
+                // Just before we submit graphics, wait for compute to finish
+                // I think I could combine this with the copy more efficiently with a barrier
+                // This is so painfully inefficient it's not even funny
+                res = vkWaitForFences(base.device, 1, &sync_set->compute_fence, VK_TRUE,
+                                      UINT64_MAX);
+                assert(res == VK_SUCCESS);
+                res = vkResetFences(base.device, 1, &sync_set->compute_fence);
+                assert(res == VK_SUCCESS);
+
+                // Copy what the compute shader outputted to a CPU-visible buffer
+                buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
+                            compute_buf_reader.handle, sizeof(struct ComputeOutput));
+                // Now actually read it
+                struct ComputeOutput *compute_out_mapped;
+                res = vkMapMemory(base.device, compute_buf_reader.mem, 0,
+                                  sizeof(struct ComputeOutput), 0, (void **)&compute_out_mapped);
+                assert(res == VK_SUCCESS);
+                printf("Cross section at x = 20:\n");
+                for (int y = 0; y < 40; y++) {
+                        for (int z = 0; z < 40; z++) {
+                                printf("%c ", compute_out_mapped->collisions[20 * 40 * 40 + y * 40 +
+                                                                             z][3] > 0
+                                                      ? '#'
+                                                      : '.');
+                        }
+                        printf("\n");
+                }
+                printf("Matrix:\n");
+                for (int i = 0; i < 4; i++) {
+                        printf("%5.2f %5.2f %5.2f %5.2f\n", compute_out_mapped->debug[i][0],
+                               compute_out_mapped->debug[i][1], compute_out_mapped->debug[i][2],
+                               compute_out_mapped->debug[i][3]);
+                }
+
+                // Update object positions
+                glm_translated(scene_data->objects[0].transform,
+                               (vec3){0, sinf(frame_ct * 0.05) * 0.1, 0});
+
+                vkUnmapMemory(base.device, compute_buf_reader.mem);
+
+                // Copy new scene data to graphics input
+                buffer_copy(base.queue, copy_cbuf, staging.handle,
+                            graphics_in_bufs[frame_idx].handle, sizeof(struct Scene));
+
+                // Reset render fence
                 res = vkResetFences(base.device, 1, &sync_set->render_fence);
                 assert(res == VK_SUCCESS);
 
@@ -708,11 +712,12 @@ int main() {
         vkDestroyDescriptorSetLayout(base.device, compute_set_layout, NULL);
         vkDestroyDescriptorSetLayout(base.device, graphics_set_layout, NULL);
 
-        buffer_destroy(base.device, &compute_buf_staging);
+        buffer_destroy(base.device, &staging);
         buffer_destroy(base.device, &compute_buf_reader);
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 buffer_destroy(base.device, &compute_in_bufs[i]);
                 buffer_destroy(base.device, &compute_out_bufs[i]);
+                buffer_destroy(base.device, &graphics_in_bufs[i]);
         }
 
         base_destroy(&base);
