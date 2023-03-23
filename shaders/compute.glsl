@@ -66,9 +66,9 @@ void main() {
 	out_buf.count = 0;
 
 	// Compute intersection between first 2 objects
-	for (float x = -2; x < 2; x += 0.2) {
-		for (float y = -2; y < 2; y += 0.2) {
-			for (float z = -2; z < 2; z += 0.2) {
+	for (float x = -2; x < 2; x += 0.1) {
+		for (float y = -2; y < 2; y += 0.1) {
+			for (float z = -2; z < 2; z += 0.1) {
 				vec3 point = vec3(x, y, z);
 				float dist0 = scene_sdf(in_buf.types[0], in_buf.transforms[0], point);
 				float dist1 = scene_sdf(in_buf.types[1], in_buf.transforms[1], point);
@@ -76,7 +76,7 @@ void main() {
 				if (dist0 <= 0 && dist1 <= 0 && out_buf.count + 1 < MAX_OBJ_COUNT) {
 					out_buf.types[out_buf.count] = 1;
 					out_buf.transforms[out_buf.count] =
-						translation(point - vec3(5, 0, 0)) * scale(0.05);
+						translation(point - vec3(5, 0, 0)) * scale(0.03);
 					out_buf.count++;
 				}
 			}

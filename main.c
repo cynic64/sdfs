@@ -56,7 +56,7 @@ struct PushConstants {
         mat4 proj;
 };
 
-#define MAX_OBJ_COUNT 2048
+#define MAX_OBJ_COUNT 8192
 
 struct StorageData {
         int32_t count;
