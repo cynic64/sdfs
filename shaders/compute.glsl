@@ -56,16 +56,19 @@ mat4 normal_rotation(vec3 normal) {
 }
 
 void main() {
+	/*
 	for (int i = 0; i < in_buf.count; i++) {
 		out_buf.types[i] = in_buf.types[i];
 		out_buf.transforms[i] = in_buf.transforms[i];
 	}
 	out_buf.count = in_buf.count;
+	*/
+	out_buf.count = 0;
 
 	// Compute intersection between first 2 objects
-	for (float x = -4; x < 4; x += 0.2) {
-		for (float y = -4; y < 4; y += 0.2) {
-			for (float z = -4; z < 4; z += 0.2) {
+	for (float x = -2; x < 2; x += 0.2) {
+		for (float y = -2; y < 2; y += 0.2) {
+			for (float z = -2; z < 2; z += 0.2) {
 				vec3 point = vec3(x, y, z);
 				float dist0 = scene_sdf(in_buf.types[0], in_buf.transforms[0], point);
 				float dist1 = scene_sdf(in_buf.types[1], in_buf.transforms[1], point);
