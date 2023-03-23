@@ -64,7 +64,7 @@ struct __attribute__((packed)) Object {
 	__attribute__((aligned(16))) mat4 transform;
 };
 
-struct Scene {
+struct __attribute__((packed)) Scene {
         int32_t count;
 
         __attribute__((aligned(16))) struct Object objects[MAX_OBJ_COUNT];
