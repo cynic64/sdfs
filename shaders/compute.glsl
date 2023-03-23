@@ -60,9 +60,9 @@ mat4 normal_rotation(vec3 normal) {
 
 void main() {
 	// Compute intersection between first 2 objects
-	float x = gl_GlobalInvocationID.x * 0.1 - 2;
-	float y = gl_GlobalInvocationID.y * 0.1 - 2;
-	float z = gl_GlobalInvocationID.z * 0.1 - 2;
+	float x = gl_GlobalInvocationID.x * 0.1 - 2 + 0.05;
+	float y = gl_GlobalInvocationID.y * 0.1 - 2 + 0.05;
+	float z = gl_GlobalInvocationID.z * 0.1 - 2 + 0.05;
 
 	vec3 point = vec3(x, y, z);
 	float dist0 = scene_sdf(in_buf.objects[0].type, in_buf.objects[0].transform, point);
@@ -72,9 +72,13 @@ void main() {
 		+ gl_GlobalInvocationID.y*40
 		+ gl_GlobalInvocationID.z;
 	if (dist0 <= 0 && dist1 <= 0) {
-		out_buf.collisions[index] = vec4(1);
+		out_buf.collisions[index].w = 1;
+		// If there's a collision, write the opposite of the object 0's normal. This is the
+		// direction it should be pushed in to un-intersect.
+		out_buf.collisions[index].xyz = -calc_normal(in_buf.objects[0].type,
+							     in_buf.objects[0].transform, point);
 	} else {
-		out_buf.collisions[index] = vec4(0);
+		out_buf.collisions[index].w = 0;
 	}
 
 	out_buf.debug = in_buf.objects[0].transform;

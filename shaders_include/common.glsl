@@ -110,3 +110,14 @@ float scene_sdf(int type, mat4 transform, vec3 point) {
 
 	return min_dist;
 }
+
+// Taken from iquilezles.org/articles/normalsSDF/
+// Messing with this is bad juju
+vec3 calc_normal(int type, mat4 transform, vec3 point) {
+    const float h = 0.0002;
+    const vec2 k = vec2(1,-1);
+    return normalize(k.xyy*scene_sdf(type, transform, point + k.xyy*h)
+		     + k.yyx*scene_sdf(type, transform, point + k.yyx*h)
+		     + k.yxy*scene_sdf(type, transform, point + k.yxy*h)
+		     + k.xxx*scene_sdf(type, transform, point + k.xxx*h));
+}

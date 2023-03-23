@@ -607,25 +607,42 @@ int main() {
                                   sizeof(struct ComputeOutput), 0, (void **)&compute_out_mapped);
                 assert(res == VK_SUCCESS);
                 printf("Cross section at x = 20:\n");
-                for (int y = 0; y < 40; y++) {
-                        for (int z = 0; z < 40; z++) {
-                                printf("%c ", compute_out_mapped->collisions[20 * 40 * 40 + y * 40 +
-                                                                             z][3] > 0
-                                                      ? '#'
-                                                      : '.');
+                for (int y = 0; y < 40; y += 4) {
+                        for (int z = 0; z < 40; z += 4) {
+                                vec4 *n =
+                                        &compute_out_mapped->collisions[20 * 40 * 40 + y * 40 + z];
+                                if ((*n)[3] > 0) {
+                                        printf("%4.1f %4.1f %4.1f | ", (*n)[0], (*n)[1], (*n)[2]);
+                                } else {
+                                        printf("               | ");
+                                }
                         }
-                        printf("\n");
-                }
-                printf("Matrix:\n");
-                for (int i = 0; i < 4; i++) {
-                        printf("%5.2f %5.2f %5.2f %5.2f\n", compute_out_mapped->debug[i][0],
-                               compute_out_mapped->debug[i][1], compute_out_mapped->debug[i][2],
-                               compute_out_mapped->debug[i][3]);
+                        printf("\n\n\n\n");
                 }
 
                 // Update object positions
-                glm_translated(scene_data->objects[0].transform,
-                               (vec3){0, sinf(frame_ct * 0.05) * 0.1, 0});
+                vec3 sum = {0};
+                for (int x = 0; x < 40; x++) {
+                        for (int y = 0; y < 40; y++) {
+                                for (int z = 0; z < 40; z++) {
+                                        if (compute_out_mapped->collisions[40 * 40 * x + 40 * y + z]
+                                                                          [3] == 0) {
+                                                continue;
+                                        }
+                                        sum[0] += compute_out_mapped
+                                                          ->collisions[40 * 40 * x + 40 * y + z][0];
+                                        sum[1] += compute_out_mapped
+                                                          ->collisions[40 * 40 * x + 40 * y + z][1];
+                                        sum[2] += compute_out_mapped
+                                                          ->collisions[40 * 40 * x + 40 * y + z][2];
+                                }
+                        }
+                }
+                printf("Sum: %5.2f %5.2f %5.2f\n", sum[0], sum[1], sum[0]);
+                sum[0] *= 0.00001;
+                sum[1] *= 0.00001;
+                sum[2] *= 0.00001;
+                glm_translated(scene_data->objects[0].transform, sum);
 
                 vkUnmapMemory(base.device, compute_buf_reader.mem);
 
