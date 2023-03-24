@@ -20,11 +20,11 @@ layout(std140, binding = 0) buffer Debug {
 	vec4 line_dirs[DEBUG_MAX_LINES];
 } data;
 
-vec2 vertices[3] = vec2[](
-			  vec2(-1, 1),
-			  vec2(1, 1),
-			  vec2(1, -1));
-
 void main() {
-	gl_Position = vec4(vertices[gl_VertexIndex], 0, 1);
+	vec3 pos = data.line_poss[gl_InstanceIndex].xyz;
+	vec3 dir = data.line_dirs[gl_InstanceIndex].xyz;
+	vec3 vertices[] = vec3[](pos, pos + dir);
+	vec3 pos_worldspace = vertices[gl_VertexIndex];
+
+	gl_Position = constants.proj * constants.view * vec4(pos_worldspace, 1);
 }

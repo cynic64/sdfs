@@ -44,7 +44,8 @@ const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 const VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 
 // I think specifying `packed` and `aligned` is the easiest way to guarantee gcc puts things at the
-// offsets I want.
+// offsets I want. `aligned` is obviously needed, and I think without `packed` things could
+// theoretically get aligned but be spread really far apart.
 struct __attribute__((packed)) PushConstants {
         // Pad to vec4 because std140
         vec4 iResolution;
@@ -61,7 +62,7 @@ struct __attribute__((packed)) PushConstants {
 
 // Both must be the same in ./shaders_include/constants.glsl
 #define MAX_OBJECTS 512
-#define DEBUG_MAX_LINES 512
+#define DEBUG_MAX_LINES 8192
 // The compute shader evaluates collisions at positions within a 4x4x4 box. This is how many cubes
 // the box should be divided into along each side (so this is 40^3 cubes total).
 #define COMPUTE_SAMPLE_COUNT 40
@@ -80,16 +81,18 @@ struct __attribute__((packed)) Scene {
 struct __attribute__((packed)) ComputeOutput {
         __attribute__((aligned(16))) mat4 debug;
 
-        // `w` component is whether a collision happened at that cell at all, xyz force that should
-        // be applied to fix collision.
+        // `w` component is whether a collision happened at that cell at all, xyz is force that
+        // should be applied to fix collision.
         __attribute__((aligned(16)))
         vec4 collisions[COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT];
 };
 
-// Gets passed to debug pass
+// Gets passed to debug pass. Yes, I know I could have just used a vertex buffer, but this is more
+// flexible if I want to include more stuff later. It's a debug layer, performance is less
+// important.
 struct __attribute__((packed)) Debug {
-        // Really these are vec3, but std140 alignment makes everything take up as
-
+        // Really these are vec3, but std140 alignment makes everything take up as much space as
+        // vec4.
         vec4 line_poss[DEBUG_MAX_LINES];
         vec4 line_dirs[DEBUG_MAX_LINES];
 };
@@ -424,10 +427,10 @@ int main() {
 
         // Actual pipeline
         struct PipelineSettings debug_pipe_settings = PIPELINE_SETTINGS_DEFAULT;
-        debug_pipe_settings.depth.depthTestEnable = VK_TRUE;
-        debug_pipe_settings.depth.depthWriteEnable = VK_TRUE;
-        debug_pipe_settings.depth.depthCompareOp = VK_COMPARE_OP_LESS;
+        debug_pipe_settings.depth.depthTestEnable = VK_FALSE;
+        debug_pipe_settings.depth.depthWriteEnable = VK_FALSE;
         debug_pipe_settings.rasterizer.cullMode = VK_CULL_MODE_NONE;
+        debug_pipe_settings.input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 
         VkPipeline debug_pipe;
         pipeline_create(base.device, &debug_pipe_settings,
@@ -611,6 +614,83 @@ int main() {
                         assert(res == VK_SUCCESS);
                 }
 
+                // Before recording graphics, wait for compute to finish
+                // I think I could combine this with the copy more efficiently with a barrier
+                // This is so painfully inefficient it's not even funny
+                res = vkWaitForFences(base.device, 1, &sync_set->compute_fence, VK_TRUE,
+                                      UINT64_MAX);
+                assert(res == VK_SUCCESS);
+                res = vkResetFences(base.device, 1, &sync_set->compute_fence);
+                assert(res == VK_SUCCESS);
+
+                // Copy what the compute shader outputted to a CPU-visible buffer
+                buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
+                            compute_buf_reader.handle, sizeof(struct ComputeOutput));
+                // Now actually read it
+                struct ComputeOutput *compute_out_mapped;
+                res = vkMapMemory(base.device, compute_buf_reader.mem, 0,
+                                  sizeof(struct ComputeOutput), 0, (void **)&compute_out_mapped);
+                assert(res == VK_SUCCESS);
+
+                struct Debug *debug_in_mapped;
+                res = vkMapMemory(base.device, debug_staging.mem, 0, sizeof(struct Debug), 0,
+                                  (void **)&debug_in_mapped);
+
+                // Update object positions and debug input
+                int debug_line_count = 0;
+                vec3 sum = {0};
+                for (int i = 0; i < 40; i++) {
+                        for (int j = 0; j < 40; j++) {
+                                for (int k = 0; k < 40; k++) {
+                                        if (compute_out_mapped->collisions[40 * 40 * i + 40 * j + k]
+                                                                          [3] == 0) {
+                                                continue;
+                                        }
+
+                                        float x = compute_out_mapped
+                                                          ->collisions[40 * 40 * i + 40 * j + k][0];
+                                        float y = compute_out_mapped
+                                                          ->collisions[40 * 40 * i + 40 * j + k][1];
+                                        float z = compute_out_mapped
+                                                          ->collisions[40 * 40 * i + 40 * j + k][2];
+
+                                        sum[0] += x;
+                                        sum[1] += y;
+                                        sum[2] += z;
+
+					if (debug_line_count + 1 >= DEBUG_MAX_LINES) continue;
+
+                                        int idx = debug_line_count;
+					// Has to match how it's calculated in `compute.glsl`
+                                        debug_in_mapped->line_poss[idx][0] = i * 0.1 - 2 + 0.05;
+                                        debug_in_mapped->line_poss[idx][1] = j * 0.1 - 2 + 0.05;
+                                        debug_in_mapped->line_poss[idx][2] = k * 0.1 - 2 + 0.05;
+
+					debug_in_mapped->line_dirs[idx][0] = x;
+					debug_in_mapped->line_dirs[idx][1] = y;
+					debug_in_mapped->line_dirs[idx][2] = z;
+					debug_line_count++;
+                                }
+                        }
+                }
+
+                vkUnmapMemory(base.device, compute_buf_reader.mem);
+                vkUnmapMemory(base.device, debug_staging.mem);
+
+                // printf("Sum: %5.2f %5.2f %5.2f\n", sum[0], sum[1], sum[0]);
+                sum[0] *= 0.00005;
+                sum[1] *= 0.00005;
+                sum[2] *= 0.00005;
+                glm_translated(scene_data->objects[0].transform, sum);
+
+                // Copy new scene data to graphics input
+                buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
+                            graphics_in_bufs[frame_idx].handle, sizeof(struct Scene));
+
+		// Copy debug input 
+                buffer_copy(base.queue, copy_cbuf, debug_staging.handle,
+                            debug_in_bufs[frame_idx].handle, sizeof(struct Debug));
+
                 // Record graphics commands
                 vkResetCommandBuffer(graphics_cbuf, 0);
                 cbuf_begin_onetime(graphics_cbuf);
@@ -665,16 +745,15 @@ int main() {
                                         NULL);
                 vkCmdDraw(graphics_cbuf, 36, MAX_OBJECTS, 0, 0);
 
-		// Debug pass
+                // Debug pass
                 vkCmdBindPipeline(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, debug_pipe);
                 vkCmdPushConstants(graphics_cbuf, debug_pipe_layout,
                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                                    sizeof(struct PushConstants), &pushc_data);
                 vkCmdBindDescriptorSets(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                        debug_pipe_layout, 0, 1, &debug_sets[frame_idx], 0,
-                                        NULL);
+                                        debug_pipe_layout, 0, 1, &debug_sets[frame_idx], 0, NULL);
 
-                vkCmdDraw(graphics_cbuf, 3, 1, 0, 0);
+                vkCmdDraw(graphics_cbuf, 2, debug_line_count, 0, 0);
 
                 vkCmdEndRenderPass(graphics_cbuf);
 
@@ -686,69 +765,6 @@ int main() {
                         vkWaitForFences(base.device, 1, &image_fences[image_idx], VK_TRUE,
                                         UINT64_MAX);
                 }
-
-                // Just before we submit graphics, wait for compute to finish
-                // I think I could combine this with the copy more efficiently with a barrier
-                // This is so painfully inefficient it's not even funny
-                res = vkWaitForFences(base.device, 1, &sync_set->compute_fence, VK_TRUE,
-                                      UINT64_MAX);
-                assert(res == VK_SUCCESS);
-                res = vkResetFences(base.device, 1, &sync_set->compute_fence);
-                assert(res == VK_SUCCESS);
-
-                // Copy what the compute shader outputted to a CPU-visible buffer
-                buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
-                            compute_buf_reader.handle, sizeof(struct ComputeOutput));
-                // Now actually read it
-                struct ComputeOutput *compute_out_mapped;
-                res = vkMapMemory(base.device, compute_buf_reader.mem, 0,
-                                  sizeof(struct ComputeOutput), 0, (void **)&compute_out_mapped);
-                assert(res == VK_SUCCESS);
-                /*
-                printf("Cross section at x = 20:\n");
-                for (int y = 0; y < 40; y += 4) {
-                        for (int z = 0; z < 40; z += 4) {
-                                vec4 *n =
-                                        &compute_out_mapped->collisions[20 * 40 * 40 + y * 40 + z];
-                                if ((*n)[3] > 0) {
-                                        printf("%4.1f %4.1f %4.1f | ", (*n)[0], (*n)[1], (*n)[2]);
-                                } else {
-                                        printf("               | ");
-                                }
-
-                                printf("\n\n\n\n");
-                }
-                */
-
-                // Update object positions
-                vec3 sum = {0};
-                for (int x = 0; x < 40; x++) {
-                        for (int y = 0; y < 40; y++) {
-                                for (int z = 0; z < 40; z++) {
-                                        if (compute_out_mapped->collisions[40 * 40 * x + 40 * y + z]
-                                                                          [3] == 0) {
-                                                continue;
-                                        }
-                                        sum[0] += compute_out_mapped
-                                                          ->collisions[40 * 40 * x + 40 * y + z][0];
-                                        sum[1] += compute_out_mapped
-                                                          ->collisions[40 * 40 * x + 40 * y + z][1];
-                                        sum[2] += compute_out_mapped
-                                                          ->collisions[40 * 40 * x + 40 * y + z][2];
-                                }
-                        }
-                }
-                // printf("Sum: %5.2f %5.2f %5.2f\n", sum[0], sum[1], sum[0]);
-                sum[0] *= 0.00005;
-                sum[1] *= 0.00005;
-                sum[2] *= 0.00005;
-                glm_translated(scene_data->objects[0].transform, sum);
-
-                vkUnmapMemory(base.device, compute_buf_reader.mem);
-
-                // Copy new scene data to graphics input
-                buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
-                            graphics_in_bufs[frame_idx].handle, sizeof(struct Scene));
 
                 // Reset render fence
                 res = vkResetFences(base.device, 1, &sync_set->render_fence);
