@@ -428,7 +428,6 @@ int main() {
         // Actual pipeline
         struct PipelineSettings debug_pipe_settings = PIPELINE_SETTINGS_DEFAULT;
         debug_pipe_settings.depth.depthTestEnable = VK_FALSE;
-        debug_pipe_settings.depth.depthWriteEnable = VK_FALSE;
         debug_pipe_settings.rasterizer.cullMode = VK_CULL_MODE_NONE;
         debug_pipe_settings.input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 
@@ -545,7 +544,7 @@ int main() {
                 last_mouse_x = new_mouse_x;
                 last_mouse_y = new_mouse_y;
 
-                // Keys
+                // Camera keys
                 vec3 cam_movement = {0.0F, 0.0F, 0.0F};
                 float speed_multiplier = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS ? 20 : 1;
                 if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
@@ -559,6 +558,26 @@ int main() {
                 }
                 if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
                         cam_movement[0] += MOVEMENT_SPEED * speed_multiplier;
+                }
+
+                // Keys to move sphere around
+                if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
+                        scene_data->objects[0].transform[3][2] += MOVEMENT_SPEED * speed_multiplier;
+                }
+                if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
+                        scene_data->objects[0].transform[3][2] -= MOVEMENT_SPEED * speed_multiplier;
+                }
+                if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
+                        scene_data->objects[0].transform[3][0] -= MOVEMENT_SPEED * speed_multiplier;
+                }
+                if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
+                        scene_data->objects[0].transform[3][0] += MOVEMENT_SPEED * speed_multiplier;
+                }
+                if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
+                        scene_data->objects[0].transform[3][1] += MOVEMENT_SPEED * speed_multiplier;
+                }
+                if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
+                        scene_data->objects[0].transform[3][1] -= MOVEMENT_SPEED * speed_multiplier;
                 }
 
                 // Update camera
@@ -658,18 +677,20 @@ int main() {
                                         sum[1] += y;
                                         sum[2] += z;
 
-					if (debug_line_count + 1 >= DEBUG_MAX_LINES) continue;
+                                        if (debug_line_count + 1 >= DEBUG_MAX_LINES) {
+                                                continue;
+                                        }
 
                                         int idx = debug_line_count;
-					// Has to match how it's calculated in `compute.glsl`
+                                        // Has to match how it's calculated in `compute.glsl`
                                         debug_in_mapped->line_poss[idx][0] = i * 0.1 - 2 + 0.05;
                                         debug_in_mapped->line_poss[idx][1] = j * 0.1 - 2 + 0.05;
                                         debug_in_mapped->line_poss[idx][2] = k * 0.1 - 2 + 0.05;
 
-					debug_in_mapped->line_dirs[idx][0] = x;
-					debug_in_mapped->line_dirs[idx][1] = y;
-					debug_in_mapped->line_dirs[idx][2] = z;
-					debug_line_count++;
+                                        debug_in_mapped->line_dirs[idx][0] = x;
+                                        debug_in_mapped->line_dirs[idx][1] = y;
+                                        debug_in_mapped->line_dirs[idx][2] = z;
+                                        debug_line_count++;
                                 }
                         }
                 }
@@ -687,7 +708,7 @@ int main() {
                 buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
                             graphics_in_bufs[frame_idx].handle, sizeof(struct Scene));
 
-		// Copy debug input 
+                // Copy debug input
                 buffer_copy(base.queue, copy_cbuf, debug_staging.handle,
                             debug_in_bufs[frame_idx].handle, sizeof(struct Debug));
 
