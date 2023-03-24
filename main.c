@@ -1,7 +1,3 @@
-#include "external/cglm/include/cglm/affine.h"
-#include "external/cglm/include/cglm/io.h"
-#include "external/cglm/include/cglm/mat4.h"
-#include "external/cglm/include/cglm/vec3.h"
 #include "external/render-c/src/cbuf.h"
 #include "external/render-c/src/mem.h"
 #include <vulkan/vulkan_core.h>
@@ -62,7 +58,7 @@ struct __attribute__((packed)) PushConstants {
 
 // Both must be the same in ./shaders_include/constants.glsl
 #define MAX_OBJECTS 512
-#define DEBUG_MAX_LINES 8192
+#define DEBUG_MAX_LINES 65536
 // The compute shader evaluates collisions at positions within a 4x4x4 box. This is how many cubes
 // the box should be divided into along each side (so this is 40^3 cubes total).
 #define COMPUTE_SAMPLE_COUNT 40
@@ -95,6 +91,12 @@ struct __attribute__((packed)) Debug {
         // vec4.
         vec4 line_poss[DEBUG_MAX_LINES];
         vec4 line_dirs[DEBUG_MAX_LINES];
+};
+
+struct Velocities {
+	vec3 vels[MAX_OBJECTS];
+	// Rotation
+	float rot_vels[MAX_OBJECTS];
 };
 
 // This stuff exists for every concurrent frame
@@ -218,6 +220,8 @@ int main() {
         vkMapMemory(base.device, scene_staging.mem, 0, sizeof(struct Scene), 0,
                     (void **)&scene_data);
         get_init_data(scene_data);
+
+	struct Velocities velocities = {0};
 
         VkCommandBuffer copy_cbuf;
         cbuf_alloc(base.device, base.cpool, &copy_cbuf);
@@ -657,31 +661,32 @@ int main() {
 
                 // Update object positions and debug input
                 int debug_line_count = 0;
-                vec3 sum = {0, 0, 0};
+                vec3 linear_sum = {0, 0, 0};
+		float angular_sum = 0;
                 for (int i = 0; i < 40; i++) {
                         for (int j = 0; j < 40; j++) {
                                 for (int k = 0; k < 40; k++) {
-                                        if (compute_out_mapped->collisions[40 * 40 * i + 40 * j + k]
-                                                                          [3] == 0) {
-                                                continue;
-                                        }
-
                                         float x = compute_out_mapped
                                                           ->collisions[40 * 40 * i + 40 * j + k][0];
                                         float y = compute_out_mapped
                                                           ->collisions[40 * 40 * i + 40 * j + k][1];
                                         float z = compute_out_mapped
                                                           ->collisions[40 * 40 * i + 40 * j + k][2];
+                                        float w = compute_out_mapped
+                                                          ->collisions[40 * 40 * i + 40 * j + k][3];
 
-					if (isnan(x) || isnan(y) || isnan(z)) {
+					if (isnan(x) || isnan(y) || isnan(z) || isnan(w)) {
 						printf("Cell at %d %d %d is nan!\n", i, j, k);
 						continue;
 					}
 
-                                        sum[0] += x;
-                                        sum[1] += y;
-                                        sum[2] += z;
+                                        linear_sum[0] += x;
+                                        linear_sum[1] += y;
+                                        linear_sum[2] += z;
 
+					angular_sum += w;
+
+					// Maybe add vector to debug lines
                                         if (debug_line_count + 1 >= DEBUG_MAX_LINES) {
                                                 continue;
                                         }
@@ -704,10 +709,38 @@ int main() {
                 vkUnmapMemory(base.device, debug_staging.mem);
 
                 //printf("Sum: %5.2f %5.2f %5.2f\n", sum[0], sum[1], sum[0]);
-                sum[0] *= 0.00005;
-                sum[1] *= 0.00005;
-                sum[2] *= 0.00005;
-                glm_translated(scene_data->objects[0].transform, sum);
+                linear_sum[0] *= 0.00001;
+                linear_sum[1] *= 0.00001;
+                linear_sum[2] *= 0.00001;
+
+		velocities.vels[0][0] += linear_sum[0];
+		velocities.vels[0][1] += linear_sum[1];
+		//velocities.vels[0][2] += linear_sum[2];
+
+		// Apply gravity, but only to first object
+		velocities.vels[0][1] -= 0.002;
+
+		// Apply world's simplest drag model
+		velocities.vels[0][0] *= 0.95;
+		velocities.vels[0][1] *= 0.95;
+		velocities.vels[0][2] *= 0.95;
+		velocities.rot_vels[0] *= 0.99;
+
+		velocities.rot_vels[0] += angular_sum * 0.00001;
+
+		// Apply linear velocity
+		for (int i = 0; i < scene_data->count; i++) {
+			scene_data->objects[i].transform[3][0] += velocities.vels[i][0];
+			scene_data->objects[i].transform[3][1] += velocities.vels[i][1];
+			//scene_data->objects[i].transform[3][2] += velocities.vels[i][2];
+		}
+
+		// Apply angular velocity
+		for (int i = 0; i < scene_data->count; i++) {
+			glm_rotate(scene_data->objects[i].transform, velocities.rot_vels[i],
+				   (vec3) {0, 0, 1});
+		}
+		
 		/*
                 printf("New pos: %5.2f %5.2f %5.2f\n", scene_data->objects[0].transform[3][0],
                        scene_data->objects[0].transform[3][1],

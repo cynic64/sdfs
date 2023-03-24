@@ -20,13 +20,16 @@ layout(std140, binding = 0) buffer Debug {
 	vec4 line_dirs[DEBUG_MAX_LINES];
 } data;
 
-layout (location = 0) out vec3 dir;
+layout (location = 0) out vec3 color;
 
 void main() {
 	vec3 pos = data.line_poss[gl_InstanceIndex].xyz;
-	dir = data.line_dirs[gl_InstanceIndex].xyz;
-	vec3 vertices[] = vec3[](pos, pos + dir);
+	vec3 dir = data.line_dirs[gl_InstanceIndex].xyz;
+	vec3 vertices[] = vec3[](pos, pos + dir * 0.2);
+	vec3 colors[] = vec3[](vec3(0), dir * 0.5 + 0.5);
 	vec3 pos_worldspace = vertices[gl_VertexIndex];
+
+	color = colors[gl_VertexIndex];
 
 	gl_Position = constants.proj * constants.view * vec4(pos_worldspace, 1);
 }

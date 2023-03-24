@@ -14,6 +14,7 @@ layout(std140, binding = 0) buffer SceneIn {
 
 layout(std140, binding = 1) buffer ComputeOut {
 	mat4 debug;
+	// w component is used for angular force
 	vec4 collisions[];
 } out_buf;
 
@@ -72,8 +73,6 @@ void main() {
 		+ gl_GlobalInvocationID.y*40
 		+ gl_GlobalInvocationID.z;
 	if (dist0 <= 0 && dist1 <= 0) {
-		out_buf.collisions[index].w = 1;
-
 		vec3 my_normal = calc_normal(in_buf.objects[0].type,
 							     in_buf.objects[0].transform, point);
 		vec3 other_normal = calc_normal(in_buf.objects[1].type,
@@ -82,9 +81,27 @@ void main() {
 		// If there's a collision, write the average of (the opposite of our normal) and
 		// (the other normal). Those should both point roughly in the right direction to
 		// un-intersect ourselves.
-		out_buf.collisions[index].xyz = (-my_normal + other_normal) * 0.5;
+
+		// For deep penetrations, the two might cancel each other out. Oh well, nothing we
+		// can really do.
+		vec3 force = (-my_normal + other_normal) * 0.5;
+		force.z = 0;
+		if (length(force.xy) > 0) force.xy = normalize(force.xy);
+
+		// Vector from center of mass to point
+		vec2 to_com = (inverse(in_buf.objects[0].transform) * vec4(point, 1)).xy;
+
+		// Perpendicular vector to that, so vector "in the direction of angular velocity"
+		vec2 ang_dir = vec2(-to_com.y, to_com.x);
+
+		// How much force is going in the direction of angular velocity
+		float ang_force = dot(force.xy, ang_dir);
+
+		out_buf.collisions[index].xy = force.xy;
+		out_buf.collisions[index].z = 0;
+		out_buf.collisions[index].w = ang_force;
 	} else {
-		out_buf.collisions[index].w = 0;
+		out_buf.collisions[index] = vec4(0);
 	}
 
 	out_buf.debug = in_buf.objects[0].transform;
