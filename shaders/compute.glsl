@@ -73,10 +73,16 @@ void main() {
 		+ gl_GlobalInvocationID.z;
 	if (dist0 <= 0 && dist1 <= 0) {
 		out_buf.collisions[index].w = 1;
-		// If there's a collision, write the opposite of the object 0's normal. This is the
-		// direction it should be pushed in to un-intersect.
-		out_buf.collisions[index].xyz = -calc_normal(in_buf.objects[0].type,
+
+		vec3 my_normal = calc_normal(in_buf.objects[0].type,
 							     in_buf.objects[0].transform, point);
+		vec3 other_normal = calc_normal(in_buf.objects[1].type,
+							     in_buf.objects[1].transform, point);
+
+		// If there's a collision, write the average of (the opposite of our normal) and
+		// (the other normal). Those should both point roughly in the right direction to
+		// un-intersect ourselves.
+		out_buf.collisions[index].xyz = (-my_normal + other_normal) * 0.5;
 	} else {
 		out_buf.collisions[index].w = 0;
 	}
