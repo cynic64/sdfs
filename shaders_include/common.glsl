@@ -91,7 +91,6 @@ float sd_pyramid( vec3 p, float h) {
 }
 
 float scene_sdf(int type, mat4 transform, vec3 point) {
-	float min_dist = 99999999;
 	vec3 point_rel = (inverse(transform) * vec4(point, 1)).xyz;
 	float dist;
 	if (type == 0) {
@@ -104,11 +103,11 @@ float scene_sdf(int type, mat4 transform, vec3 point) {
 		dist = sd_box_frame(point_rel, vec3(1), 0.05);
 	} else if (type == 4) {
 		dist = sd_pyramid(point_rel, 1);
+	} else {
+		dist = 0;
 	}
 
-	if (dist < min_dist) min_dist = dist;
-
-	return min_dist;
+	return dist;
 }
 
 // Taken from iquilezles.org/articles/normalsSDF/
@@ -116,8 +115,13 @@ float scene_sdf(int type, mat4 transform, vec3 point) {
 vec3 calc_normal(int type, mat4 transform, vec3 point) {
     const float h = 0.0002;
     const vec2 k = vec2(1,-1);
-    return normalize(k.xyy*scene_sdf(type, transform, point + k.xyy*h)
+    vec3 n = k.xyy*scene_sdf(type, transform, point + k.xyy*h)
 		     + k.yyx*scene_sdf(type, transform, point + k.yyx*h)
 		     + k.yxy*scene_sdf(type, transform, point + k.yxy*h)
-		     + k.xxx*scene_sdf(type, transform, point + k.xxx*h));
+		     + k.xxx*scene_sdf(type, transform, point + k.xxx*h);
+    if (n.x == 0 && n.y == 0 && n.z == 0) {
+	    return vec3(0);
+    } else {
+	    return normalize(n);
+    }
 }
