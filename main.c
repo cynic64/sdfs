@@ -129,16 +129,16 @@ void sync_set_destroy(VkDevice device, struct SyncSet *sync_set) {
 
 void get_init_data(struct Scene *data) {
         data->count = 4;
-        // Sphere
-        data->objects[0].type = 0;
-        glm_translate_make(data->objects[0].transform, (vec3){0, 0, 0});
+        // Cube 1
+        data->objects[0].type = 1;
+        glm_translate_make(data->objects[0].transform, (vec3){0, 5, 0});
         glm_scale(data->objects[0].transform, (vec3){2, 2, 2});
 
-        // Cube
+        // Cube 2
         data->objects[1].type = 1;
         // Note that these happen in the reverse order, the scale is done first. It's like how when
         // you apply model-view-projection in vertex shader you do P*V*M*pos.
-        glm_translate_make(data->objects[1].transform, (vec3){0, 3, 0});
+        glm_translate_make(data->objects[1].transform, (vec3){0, 0, 0});
         glm_scale(data->objects[1].transform, (vec3){2, 2, 2});
 
         // Fractal
@@ -657,7 +657,7 @@ int main() {
 
                 // Update object positions and debug input
                 int debug_line_count = 0;
-                vec3 sum = {0};
+                vec3 sum = {0, 0, 0};
                 for (int i = 0; i < 40; i++) {
                         for (int j = 0; j < 40; j++) {
                                 for (int k = 0; k < 40; k++) {
@@ -672,6 +672,11 @@ int main() {
                                                           ->collisions[40 * 40 * i + 40 * j + k][1];
                                         float z = compute_out_mapped
                                                           ->collisions[40 * 40 * i + 40 * j + k][2];
+
+					if (isnan(x) || isnan(y) || isnan(z)) {
+						printf("Cell at %d %d %d is nan!\n", i, j, k);
+						continue;
+					}
 
                                         sum[0] += x;
                                         sum[1] += y;
@@ -698,11 +703,16 @@ int main() {
                 vkUnmapMemory(base.device, compute_buf_reader.mem);
                 vkUnmapMemory(base.device, debug_staging.mem);
 
-                // printf("Sum: %5.2f %5.2f %5.2f\n", sum[0], sum[1], sum[0]);
+                //printf("Sum: %5.2f %5.2f %5.2f\n", sum[0], sum[1], sum[0]);
                 sum[0] *= 0.00005;
                 sum[1] *= 0.00005;
                 sum[2] *= 0.00005;
                 glm_translated(scene_data->objects[0].transform, sum);
+		/*
+                printf("New pos: %5.2f %5.2f %5.2f\n", scene_data->objects[0].transform[3][0],
+                       scene_data->objects[0].transform[3][1],
+                       scene_data->objects[0].transform[3][2]);
+		*/
 
                 // Copy new scene data to graphics input
                 buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
