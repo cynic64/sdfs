@@ -178,17 +178,17 @@ void reorthogonalize(mat4 m, mat4 out) {
         vec3 z_norm = {0.5 * (3 - z_dot) * z_orth[0], 0.5 * (3 - z_dot) * z_orth[1],
                        0.5 * (3 - z_dot) * z_orth[2]};
 
-	bzero(out, sizeof(mat4));
-	out[0][0] = x_norm[0];
-	out[1][0] = x_norm[1];
-	out[2][0] = x_norm[2];
-	out[0][1] = y_norm[0];
-	out[1][1] = y_norm[1];
-	out[2][1] = y_norm[2];
-	out[0][2] = z_norm[0];
-	out[1][2] = z_norm[1];
-	out[2][2] = z_norm[2];
-	out[3][3] = 1;
+        bzero(out, sizeof(mat4));
+        out[0][0] = x_norm[0];
+        out[1][0] = x_norm[1];
+        out[2][0] = x_norm[2];
+        out[0][1] = y_norm[0];
+        out[1][1] = y_norm[1];
+        out[2][1] = y_norm[2];
+        out[0][2] = z_norm[0];
+        out[1][2] = z_norm[1];
+        out[2][2] = z_norm[2];
+        out[3][3] = 1;
 }
 
 int main() {
@@ -602,24 +602,58 @@ int main() {
                         cam_movement[0] += MOVEMENT_SPEED * speed_multiplier;
                 }
 
-                // Keys to move sphere around
-                if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
-                        scene_data->objects[0].transform[3][2] += MOVEMENT_SPEED * speed_multiplier;
-                }
-                if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-                        scene_data->objects[0].transform[3][2] -= MOVEMENT_SPEED * speed_multiplier;
-                }
-                if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
-                        scene_data->objects[0].transform[3][0] -= MOVEMENT_SPEED * speed_multiplier;
-                }
-                if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
-                        scene_data->objects[0].transform[3][0] += MOVEMENT_SPEED * speed_multiplier;
-                }
-                if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-                        scene_data->objects[0].transform[3][1] += MOVEMENT_SPEED * speed_multiplier;
-                }
-                if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
-                        scene_data->objects[0].transform[3][1] -= MOVEMENT_SPEED * speed_multiplier;
+                if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
+                        // Keys to rotate sphere
+                        if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
+                                glm_rotate(scene_data->objects[0].transform,
+                                            speed_multiplier * 0.001, (vec3){1, 0, 0});
+                        }
+                        if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
+                                glm_rotate(scene_data->objects[0].transform,
+                                            -speed_multiplier * 0.001, (vec3){1, 0, 0});
+                        }
+                        if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
+                                glm_rotate(scene_data->objects[0].transform,
+                                            speed_multiplier * 0.001, (vec3){0, 0, 1});
+                        }
+                        if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
+                                glm_rotate(scene_data->objects[0].transform,
+                                            -speed_multiplier * 0.001, (vec3){0, 0, 1});
+                        }
+                        if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
+                                glm_rotate(scene_data->objects[0].transform,
+                                            speed_multiplier * 0.001, (vec3){0, 1, 0});
+                        }
+                        if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
+                                glm_rotate(scene_data->objects[0].transform,
+                                            -speed_multiplier * 0.001, (vec3){0, 1, 0});
+                        }
+                } else {
+                        // Keys to move sphere around
+                        if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
+                                scene_data->objects[0].transform[3][2] +=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                        }
+                        if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
+                                scene_data->objects[0].transform[3][2] -=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                        }
+                        if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
+                                scene_data->objects[0].transform[3][0] -=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                        }
+                        if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
+                                scene_data->objects[0].transform[3][0] +=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                        }
+                        if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
+                                scene_data->objects[0].transform[3][1] +=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                        }
+                        if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
+                                scene_data->objects[0].transform[3][1] -=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                        }
                 }
 
                 // Update camera
@@ -773,13 +807,10 @@ int main() {
                         scene_data->objects[i].transform[3][1] += velocities.vels[i][1];
                         //scene_data->objects[i].transform[3][2] += velocities.vels[i][2];
                 }
-
-                // Apply angular velocity
-                for (int i = 0; i < scene_data->count; i++) {
-                        glm_rotate(scene_data->objects[i].transform, velocities.rot_vels[i],
-                                   (vec3) {0, 0, 1});
-                }
                 */
+
+                /*
+                // Apply angular velocity
                 vec3 omega = {0.05, 0.05, 0.05};
                 mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
                                     {omega[2], 0, -omega[0], 0},
@@ -795,7 +826,8 @@ int main() {
                         }
                 }
 
-		reorthogonalize(scene_data->objects[1].transform, scene_data->objects[1].transform);
+                reorthogonalize(scene_data->objects[1].transform, scene_data->objects[1].transform);
+                */
 
                 /*
                 printf("New pos: %5.2f %5.2f %5.2f\n", scene_data->objects[0].transform[3][0],
