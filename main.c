@@ -135,8 +135,8 @@ void get_init_data(struct Scene *data) {
         data->count = 2;
         // Cube 1
         data->objects[0].type = 1;
-        glm_translate_make(data->objects[0].transform, (vec3){0, 5, 0});
-        glm_scale(data->objects[0].transform, (vec3){2, 2, 2});
+        glm_translate_make(data->objects[0].transform, (vec3){0, 2.5, 0});
+        glm_scale(data->objects[0].transform, (vec3){1, 1, 1});
 
         // Cube 2
         data->objects[1].type = 1;
@@ -153,6 +153,42 @@ void get_init_data(struct Scene *data) {
         // Cone
         data->objects[3].type = 4;
         glm_translate_make(data->objects[3].transform, (vec3){12, 0, 0});
+}
+
+// Adapted from https://varunagrawal.github.io/2020/02/11/fast-orthogonalization/
+// Still works if `m` and `out` are the same matrix
+void reorthogonalize(mat4 m, mat4 out) {
+        vec3 x = {m[0][0], m[1][0], m[2][0]};
+        vec3 y = {m[0][1], m[1][1], m[2][1]};
+
+        float e = glm_dot(x, y);
+        vec3 x_orth = {x[0] - 0.5 * e * y[0], x[1] - 0.5 * e * y[1], x[2] - 0.5 * e * y[2]};
+        vec3 y_orth = {y[0] - 0.5 * e * x[0], y[1] - 0.5 * e * x[1], y[2] - 0.5 * e * x[2]};
+        vec3 z_orth;
+        glm_cross(x_orth, y_orth, z_orth);
+
+        float x_dot = glm_dot(x_orth, x_orth);
+        float y_dot = glm_dot(y_orth, y_orth);
+        float z_dot = glm_dot(z_orth, z_orth);
+
+        vec3 x_norm = {0.5 * (3 - x_dot) * x_orth[0], 0.5 * (3 - x_dot) * x_orth[1],
+                       0.5 * (3 - x_dot) * x_orth[2]};
+        vec3 y_norm = {0.5 * (3 - y_dot) * y_orth[0], 0.5 * (3 - y_dot) * y_orth[1],
+                       0.5 * (3 - y_dot) * y_orth[2]};
+        vec3 z_norm = {0.5 * (3 - z_dot) * z_orth[0], 0.5 * (3 - z_dot) * z_orth[1],
+                       0.5 * (3 - z_dot) * z_orth[2]};
+
+	bzero(out, sizeof(mat4));
+	out[0][0] = x_norm[0];
+	out[1][0] = x_norm[1];
+	out[2][0] = x_norm[2];
+	out[0][1] = y_norm[0];
+	out[1][1] = y_norm[1];
+	out[2][1] = y_norm[2];
+	out[0][2] = z_norm[0];
+	out[1][2] = z_norm[1];
+	out[2][2] = z_norm[2];
+	out[3][3] = 1;
 }
 
 int main() {
@@ -744,21 +780,22 @@ int main() {
                                    (vec3) {0, 0, 1});
                 }
                 */
-                vec3 omega = {0.01, 0.01, 0.01};
+                vec3 omega = {0.05, 0.05, 0.05};
                 mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
                                     {omega[2], 0, -omega[0], 0},
                                     {-omega[1], omega[0], 0, 0},
                                     {0, 0, 0, 1}};
 
                 mat4 derivative;
-                glm_mat4_mul(omega_tilde, scene_data->objects[1].transform,
-                             derivative);
+                glm_mat4_mul(omega_tilde, scene_data->objects[1].transform, derivative);
 
-		for (int i = 0; i < 3; i++) {
-			for (int j = 0; j < 3; j++) {
-				scene_data->objects[1].transform[i][j] += derivative[i][j];
-			}
-		}
+                for (int i = 0; i < 3; i++) {
+                        for (int j = 0; j < 3; j++) {
+                                scene_data->objects[1].transform[i][j] += derivative[i][j];
+                        }
+                }
+
+		reorthogonalize(scene_data->objects[1].transform, scene_data->objects[1].transform);
 
                 /*
                 printf("New pos: %5.2f %5.2f %5.2f\n", scene_data->objects[0].transform[3][0],
