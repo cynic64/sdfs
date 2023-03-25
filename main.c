@@ -77,12 +77,11 @@ struct __attribute__((packed)) Scene {
 };
 
 struct __attribute__((packed)) ComputeOutput {
-        __attribute__((aligned(16))) mat4 debug;
-
-        // `w` component is whether a collision happened at that cell at all, xyz is force that
-        // should be applied to fix collision.
+        // Really these are vec3's, but std140 pads them to vec4
+        vec4 forces[COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT];
+        // Sum these up to get the derivative of the angular velocity
         __attribute__((aligned(16)))
-        vec4 collisions[COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT];
+        vec4 torques[COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT];
 };
 
 // Gets passed to debug pass. Yes, I know I could have just used a vertex buffer, but this is more
@@ -96,9 +95,12 @@ struct __attribute__((packed)) Debug {
 };
 
 struct Velocities {
-        vec3 vels[MAX_OBJECTS];
-        // Rotation
-        float rot_vels[MAX_OBJECTS];
+	vec3 pos;
+	mat4 orientation;
+
+        vec3 linear[MAX_OBJECTS];
+	// Axis of rotation. Magnitude is rotation speed.
+        vec3 angular[MAX_OBJECTS];
 };
 
 // This stuff exists for every concurrent frame
@@ -260,6 +262,8 @@ int main() {
         get_init_data(scene_data);
 
         struct Velocities velocities = {0};
+	velocities.pos[1] = 3;
+	glm_mat4_identity(velocities.orientation);
 
         VkCommandBuffer copy_cbuf;
         cbuf_alloc(base.device, base.cpool, &copy_cbuf);
@@ -605,53 +609,53 @@ int main() {
                 if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
                         // Keys to rotate sphere
                         if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].transform,
-                                            speed_multiplier * 0.001, (vec3){1, 0, 0});
+                                glm_rotate(velocities.orientation,
+                                           speed_multiplier * 0.001, (vec3){1, 0, 0});
                         }
                         if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].transform,
-                                            -speed_multiplier * 0.001, (vec3){1, 0, 0});
+                                glm_rotate(velocities.orientation,
+                                           -speed_multiplier * 0.001, (vec3){1, 0, 0});
                         }
                         if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].transform,
-                                            speed_multiplier * 0.001, (vec3){0, 0, 1});
+                                glm_rotate(velocities.orientation,
+                                           speed_multiplier * 0.001, (vec3){0, 0, 1});
                         }
                         if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].transform,
-                                            -speed_multiplier * 0.001, (vec3){0, 0, 1});
+                                glm_rotate(velocities.orientation,
+                                           -speed_multiplier * 0.001, (vec3){0, 0, 1});
                         }
                         if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].transform,
-                                            speed_multiplier * 0.001, (vec3){0, 1, 0});
+                                glm_rotate(velocities.orientation,
+                                           speed_multiplier * 0.001, (vec3){0, 1, 0});
                         }
                         if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].transform,
-                                            -speed_multiplier * 0.001, (vec3){0, 1, 0});
+                                glm_rotate(velocities.orientation,
+                                           -speed_multiplier * 0.001, (vec3){0, 1, 0});
                         }
                 } else {
                         // Keys to move sphere around
                         if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
-                                scene_data->objects[0].transform[3][2] +=
+                                velocities.pos[2] +=
                                         MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-                                scene_data->objects[0].transform[3][2] -=
+                                velocities.pos[2] -=
                                         MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
-                                scene_data->objects[0].transform[3][0] -=
+                                velocities.pos[0] -=
                                         MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
-                                scene_data->objects[0].transform[3][0] +=
+                                velocities.pos[0] +=
                                         MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-                                scene_data->objects[0].transform[3][1] +=
+                                velocities.pos[1] +=
                                         MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
-                                scene_data->objects[0].transform[3][1] -=
+                                velocities.pos[1] -=
                                         MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                 }
@@ -734,29 +738,37 @@ int main() {
                 // Update object positions and debug input
                 int debug_line_count = 0;
                 vec3 linear_sum = {0, 0, 0};
-                float angular_sum = 0;
+                vec3 angular_sum = {0, 0, 0};
                 for (int i = 0; i < 40; i++) {
                         for (int j = 0; j < 40; j++) {
                                 for (int k = 0; k < 40; k++) {
-                                        float x = compute_out_mapped
-                                                          ->collisions[40 * 40 * i + 40 * j + k][0];
-                                        float y = compute_out_mapped
-                                                          ->collisions[40 * 40 * i + 40 * j + k][1];
-                                        float z = compute_out_mapped
-                                                          ->collisions[40 * 40 * i + 40 * j + k][2];
-                                        float w = compute_out_mapped
-                                                          ->collisions[40 * 40 * i + 40 * j + k][3];
+                                        float fx = compute_out_mapped
+                                                           ->forces[40 * 40 * i + 40 * j + k][0];
+                                        float fy = compute_out_mapped
+                                                           ->forces[40 * 40 * i + 40 * j + k][1];
+                                        float fz = compute_out_mapped
+                                                           ->forces[40 * 40 * i + 40 * j + k][2];
 
-                                        if (isnan(x) || isnan(y) || isnan(z) || isnan(w)) {
+                                        float tx = compute_out_mapped
+                                                           ->torques[40 * 40 * i + 40 * j + k][0];
+                                        float ty = compute_out_mapped
+                                                           ->torques[40 * 40 * i + 40 * j + k][1];
+                                        float tz = compute_out_mapped
+                                                           ->torques[40 * 40 * i + 40 * j + k][2];
+
+                                        if (isnan(fx) || isnan(fy) || isnan(fz) || isnan(tx) ||
+                                            isnan(ty) || isnan(tz)) {
                                                 printf("Cell at %d %d %d is nan!\n", i, j, k);
                                                 continue;
                                         }
 
-                                        linear_sum[0] += x;
-                                        linear_sum[1] += y;
-                                        linear_sum[2] += z;
+                                        linear_sum[0] += fx;
+                                        linear_sum[1] += fy;
+                                        linear_sum[2] += fz;
 
-                                        angular_sum += w;
+                                        angular_sum[0] += tx;
+                                        angular_sum[1] += ty;
+                                        angular_sum[2] += tz;
 
                                         // Maybe add vector to debug lines
                                         if (debug_line_count + 1 >= DEBUG_MAX_LINES) {
@@ -769,9 +781,9 @@ int main() {
                                         debug_in_mapped->line_poss[idx][1] = j * 0.1 - 2 + 0.05;
                                         debug_in_mapped->line_poss[idx][2] = k * 0.1 - 2 + 0.05;
 
-                                        debug_in_mapped->line_dirs[idx][0] = x;
-                                        debug_in_mapped->line_dirs[idx][1] = y;
-                                        debug_in_mapped->line_dirs[idx][2] = z;
+                                        debug_in_mapped->line_dirs[idx][0] = tx;
+                                        debug_in_mapped->line_dirs[idx][1] = ty;
+                                        debug_in_mapped->line_dirs[idx][2] = tz;
                                         debug_line_count++;
                                 }
                         }
@@ -785,33 +797,38 @@ int main() {
                 linear_sum[1] *= 0.00001;
                 linear_sum[2] *= 0.00001;
 
-                velocities.vels[0][0] += linear_sum[0];
-                velocities.vels[0][1] += linear_sum[1];
-                // velocities.vels[0][2] += linear_sum[2];
+                angular_sum[0] *= 0.00002;
+                angular_sum[1] *= 0.00002;
+                angular_sum[2] *= 0.00002;
+
+                velocities.linear[0][0] += linear_sum[0];
+                velocities.linear[0][1] += linear_sum[1];
+                velocities.linear[0][2] += linear_sum[2];
+
+                velocities.angular[0][0] += angular_sum[0];
+                velocities.angular[0][1] += angular_sum[1];
+                velocities.angular[0][2] += angular_sum[2];
 
                 // Apply gravity, but only to first object
-                velocities.vels[0][1] -= 0.002;
+                velocities.linear[0][1] -= 0.0005;
 
                 // Apply world's simplest drag model
-                velocities.vels[0][0] *= 0.95;
-                velocities.vels[0][1] *= 0.95;
-                velocities.vels[0][2] *= 0.95;
-                velocities.rot_vels[0] *= 0.99;
+                velocities.linear[0][0] *= 0.95;
+                velocities.linear[0][1] *= 0.95;
+                velocities.linear[0][2] *= 0.95;
 
-                velocities.rot_vels[0] += angular_sum * 0.00001;
+                velocities.angular[0][0] *= 0.95;
+                velocities.angular[0][1] *= 0.95;
+                velocities.angular[0][2] *= 0.95;
 
-                /*
-                // Apply linear velocity
-                for (int i = 0; i < scene_data->count; i++) {
-                        scene_data->objects[i].transform[3][0] += velocities.vels[i][0];
-                        scene_data->objects[i].transform[3][1] += velocities.vels[i][1];
-                        //scene_data->objects[i].transform[3][2] += velocities.vels[i][2];
-                }
-                */
+                // Apply linear velocity, just to first object for now
+		velocities.pos[0] += velocities.linear[0][0];
+		velocities.pos[1] += velocities.linear[0][1];
+		velocities.pos[2] += velocities.linear[0][2];
 
-                /*
                 // Apply angular velocity
-                vec3 omega = {0.05, 0.05, 0.05};
+                vec3 omega;
+		memcpy(omega, velocities.angular[0], sizeof(vec3));
                 mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
                                     {omega[2], 0, -omega[0], 0},
                                     {-omega[1], omega[0], 0, 0},
@@ -822,12 +839,15 @@ int main() {
 
                 for (int i = 0; i < 3; i++) {
                         for (int j = 0; j < 3; j++) {
-                                scene_data->objects[1].transform[i][j] += derivative[i][j];
+                                velocities.orientation[i][j] -= derivative[i][j];
                         }
                 }
 
-                reorthogonalize(scene_data->objects[1].transform, scene_data->objects[1].transform);
-                */
+                reorthogonalize(velocities.orientation, velocities.orientation);
+
+		mat4 translate;
+		glm_translate_make(translate, velocities.pos);
+		glm_mat4_mul(translate, velocities.orientation, scene_data->objects[0].transform);
 
                 /*
                 printf("New pos: %5.2f %5.2f %5.2f\n", scene_data->objects[0].transform[3][0],

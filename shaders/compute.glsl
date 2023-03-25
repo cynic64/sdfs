@@ -13,9 +13,8 @@ layout(std140, binding = 0) buffer SceneIn {
 } in_buf;
 
 layout(std140, binding = 1) buffer ComputeOut {
-	mat4 debug;
-	// w component is used for angular force
-	vec4 collisions[];
+	vec3 forces[40*40*40];
+	vec3 torques[40*40*40];
 } out_buf;
 
 layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
@@ -88,21 +87,21 @@ void main() {
 		force.z = 0;
 		if (length(force.xy) > 0) force.xy = normalize(force.xy);
 
-		// Vector from center of mass to point
-		vec2 to_com = (inverse(in_buf.objects[0].transform) * vec4(point, 1)).xy;
+		// Object's center of mass
+		vec3 com = (in_buf.objects[0].transform * vec4(0, 0, 0, 1)).xyz;
 
-		// Perpendicular vector to that, so vector "in the direction of angular velocity"
-		vec2 ang_dir = vec2(-to_com.y, to_com.x);
+		// Vector from COM to point
+		vec3 r = point - com;
 
-		// How much force is going in the direction of angular velocity
-		float ang_force = dot(force.xy, ang_dir);
-
-		out_buf.collisions[index].xy = force.xy;
-		out_buf.collisions[index].z = 0;
-		out_buf.collisions[index].w = ang_force;
+		// Cross of force and vector to COM, which is the force's contribution to torque or
+		// something
+		// man this hurts my brain
+		vec3 torque = cross(r, force);
+		
+		out_buf.forces[index] = force;
+		out_buf.torques[index] = torque;
 	} else {
-		out_buf.collisions[index] = vec4(0);
+		out_buf.forces[index] = vec3(0);
+		out_buf.torques[index] = vec3(0);
 	}
-
-	out_buf.debug = in_buf.objects[0].transform;
 }
