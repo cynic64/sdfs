@@ -88,7 +88,9 @@ struct __attribute__((packed, aligned(16))) ComputeOut {
         vec4 torque; // vec3
 
         // Instantaneous change in velocity
-        vec4 linear_impulse; // vec3
+        vec3 linear_impulse;
+
+        uint32_t collision_count;
 };
 
 // Gets passed to debug pass. Yes, I know I could have just used a vertex buffer, but this is more
@@ -129,17 +131,25 @@ void sync_set_destroy(VkDevice device, struct SyncSet *sync_set) {
         vkDestroySemaphore(device, sync_set->render_sem, NULL);
 }
 
+void object_make_transform(struct Object *object) {
+        mat4 translate;
+        glm_translate_make(translate, object->pos);
+        glm_mat4_mul(translate, object->orientation, object->transform);
+}
+
 void get_init_data(struct Scene *data) {
         bzero(data, sizeof(struct Scene));
         data->count[0] = 2;
         // Cube 1
         data->objects[0].type[0] = 1;
-        data->objects[0].pos[1] = 2.5;
-	glm_mat4_identity(data->objects[0].orientation);
+        data->objects[0].pos[1] = 4;
+        glm_mat4_identity(data->objects[0].orientation);
+        object_make_transform(&data->objects[0]);
 
         // Cube 2
         data->objects[1].type[0] = 1;
-	glm_mat4_identity(data->objects[1].orientation);
+        glm_mat4_identity(data->objects[1].orientation);
+        object_make_transform(&data->objects[1]);
 }
 
 // Adapted from https://varunagrawal.github.io/2020/02/11/fast-orthogonalization/
@@ -522,6 +532,15 @@ int main() {
         double last_mouse_x, last_mouse_y;
         glfwGetCursorPos(window, &last_mouse_x, &last_mouse_y);
 
+        // Every frame, we read the previous frame's compute output to integrate velocities and
+        // positions
+        struct ComputeOut *compute_out_mapped;
+        res = vkMapMemory(base.device, compute_buf_reader.mem, 0, sizeof(struct ComputeOut), 0,
+                          (void **)&compute_out_mapped);
+        assert(res == VK_SUCCESS);
+        // Should all be 0 initially
+        bzero(compute_out_mapped, sizeof(struct ComputeOut));
+
         // Main loop
         int frame_ct = 0;
         struct timespec start_time = timer_start();
@@ -677,6 +696,42 @@ int main() {
                 res = vkWaitForFences(base.device, 1, &sync_set->render_fence, VK_TRUE, UINT64_MAX);
                 assert(res == VK_SUCCESS);
 
+                // Integrate acceleration to velocity
+                vec3 linear_accel = {0, 0, 0};
+                vec3 angular_accel = {0, 0, 0};
+                memcpy(linear_accel, compute_out_mapped->force, sizeof(vec3));
+                memcpy(angular_accel, compute_out_mapped->torque, sizeof(vec3));
+
+                linear_accel[0] *= 0.00001;
+                linear_accel[1] *= 0.00001;
+                linear_accel[2] *= 0.00001;
+
+                angular_accel[0] *= 0.00002;
+                angular_accel[1] *= 0.00002;
+                angular_accel[2] *= 0.00002;
+
+                scene_data->objects[0].linear_vel[0] += linear_accel[0];
+                scene_data->objects[0].linear_vel[1] += linear_accel[1];
+                scene_data->objects[0].linear_vel[2] += linear_accel[2];
+
+                scene_data->objects[0].angular_vel[0] += angular_accel[0];
+                scene_data->objects[0].angular_vel[1] += angular_accel[1];
+                scene_data->objects[0].angular_vel[2] += angular_accel[2];
+
+                // Apply gravity, but only to first object
+                scene_data->objects[0].linear_vel[1] -= 0.0005;
+
+                // Apply world's simplest drag model
+		/*
+                scene_data->objects[0].linear_vel[0] *= 0.99;
+                scene_data->objects[0].linear_vel[1] *= 0.99;
+                scene_data->objects[0].linear_vel[2] *= 0.99;
+
+                scene_data->objects[0].angular_vel[0] *= 0.99;
+                scene_data->objects[0].angular_vel[1] *= 0.99;
+                scene_data->objects[0].angular_vel[2] *= 0.99;
+		*/
+
                 // Copy latest data to compute shader input
                 buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
                             compute_in_bufs[frame_idx].handle, sizeof(struct Scene));
@@ -728,58 +783,28 @@ int main() {
                 // Copy what the compute shader outputted to a CPU-visible buffer
                 buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
                             compute_buf_reader.handle, sizeof(struct ComputeOut));
-                // Now actually read it
-                struct ComputeOut *compute_out_mapped;
-                res = vkMapMemory(base.device, compute_buf_reader.mem, 0, sizeof(struct ComputeOut),
-                                  0, (void **)&compute_out_mapped);
-                assert(res == VK_SUCCESS);
-
-                struct Debug *debug_in_mapped;
-                res = vkMapMemory(base.device, debug_staging.mem, 0, sizeof(struct Debug), 0,
-                                  (void **)&debug_in_mapped);
+                // We only use the results at the beginning of next frame
 
                 // Update object positions and debug input
                 struct timespec start_time = timer_start();
 
-                int debug_line_count = 0;
-                vec3 linear_sum = {0, 0, 0};
-                vec3 angular_sum = {0, 0, 0};
-                memcpy(linear_sum, compute_out_mapped->force, sizeof(vec3));
-                memcpy(angular_sum, compute_out_mapped->torque, sizeof(vec3));
+                // Apply impulse
+                printf("Total linear impulse: %5.2f %5.2f %5.2f\n",
+                       compute_out_mapped->linear_impulse[0], compute_out_mapped->linear_impulse[1],
+                       compute_out_mapped->linear_impulse[2]);
+                // Multiplying by 0.1 here shouldn't be necessary, something's not quite right
+                float mass = 1;
+                uint32_t col_count = compute_out_mapped->collision_count;
+                if (col_count > 0) {
+                        scene_data->objects[0].linear_vel[0] +=
+                                compute_out_mapped->linear_impulse[0] / mass * 2 / col_count;
+                        scene_data->objects[0].linear_vel[1] +=
+                                compute_out_mapped->linear_impulse[1] / mass * 2 / col_count;
+                        scene_data->objects[0].linear_vel[2] +=
+                                compute_out_mapped->linear_impulse[2] / mass * 2 / col_count;
+                }
 
-                vkUnmapMemory(base.device, compute_buf_reader.mem);
-                vkUnmapMemory(base.device, debug_staging.mem);
-
-                // printf("Sum: %5.2f %5.2f %5.2f\n", sum[0], sum[1], sum[0]);
-                linear_sum[0] *= 0.00001;
-                linear_sum[1] *= 0.00001;
-                linear_sum[2] *= 0.00001;
-
-                angular_sum[0] *= 0.00002;
-                angular_sum[1] *= 0.00002;
-                angular_sum[2] *= 0.00002;
-
-                scene_data->objects[0].linear_vel[0] += linear_sum[0];
-                scene_data->objects[0].linear_vel[1] += linear_sum[1];
-                scene_data->objects[0].linear_vel[2] += linear_sum[2];
-
-                scene_data->objects[0].angular_vel[0] += angular_sum[0];
-                scene_data->objects[0].angular_vel[1] += angular_sum[1];
-                scene_data->objects[0].angular_vel[2] += angular_sum[2];
-
-                // Apply gravity, but only to first object
-                scene_data->objects[0].linear_vel[1] -= 0.0005;
-
-                // Apply world's simplest drag model
-                scene_data->objects[0].linear_vel[0] *= 0.99;
-                scene_data->objects[0].linear_vel[1] *= 0.99;
-                scene_data->objects[0].linear_vel[2] *= 0.99;
-
-                scene_data->objects[0].angular_vel[0] *= 0.99;
-                scene_data->objects[0].angular_vel[1] *= 0.99;
-                scene_data->objects[0].angular_vel[2] *= 0.99;
-
-                // Apply linear velocity, just to first object for now
+                // Integrate velocity to position
                 scene_data->objects[0].pos[0] += scene_data->objects[0].linear_vel[0];
                 scene_data->objects[0].pos[1] += scene_data->objects[0].linear_vel[1];
                 scene_data->objects[0].pos[2] += scene_data->objects[0].linear_vel[2];
@@ -808,10 +833,7 @@ int main() {
 
                 // Generate all transform matrices from position and orientation
                 for (int i = 0; i < scene_data->count[0]; i++) {
-                        mat4 translate;
-                        glm_translate_make(translate, scene_data->objects[i].pos);
-                        glm_mat4_mul(translate, scene_data->objects[i].orientation,
-                                     scene_data->objects[i].transform);
+                        object_make_transform(&scene_data->objects[0]);
                 }
 
                 total_collision_time += timer_get_elapsed(&start_time);
@@ -892,6 +914,7 @@ int main() {
                 vkCmdBindDescriptorSets(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         debug_pipe_layout, 0, 1, &debug_sets[frame_idx], 0, NULL);
 
+                int debug_line_count = 1;
                 vkCmdDraw(graphics_cbuf, 2, debug_line_count, 0, 0);
 
                 vkCmdEndRenderPass(graphics_cbuf);

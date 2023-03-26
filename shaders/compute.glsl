@@ -23,6 +23,7 @@ layout(std140, binding = 1) buffer ComputeOut {
 	vec3 force;
 	vec3 torque;
 	vec3 linear_impulse;
+	uint collision_count;
 } out_buf;
 
 layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
@@ -53,9 +54,9 @@ void main() {
 
 		// For deep penetrations, the two might cancel each other out. Oh well, nothing we
 		// can really do.
-		vec3 force = (-my_normal + other_normal) * 0.5;
-		force.z = 0;
-		if (length(force.xy) > 0) force.xy = normalize(force.xy);
+		vec3 collision_normal = (-my_normal + other_normal) * 0.5;
+
+		if (length(collision_normal) == 0) return;
 
 		// Object's center of mass
 		vec3 com = (a_transform * vec4(0, 0, 0, 1)).xyz;
@@ -66,14 +67,22 @@ void main() {
 		// Cross of force and vector to COM, which is the force's contribution to torque or
 		// something
 		// man this hurts my brain
-		vec3 torque = cross(r, force);
+		//vec3 torque = cross(r, force);
+
+		// 1 = perfectly elastic, 0 = all momentum absorbed on collision
+		float restitution = 1;
+		// Eventually these should be passed as part of Object
+		float a_mass = 1;
+		float b_mass = 1;
+		vec3 rel_vel = in_buf.objects[0].linear_vel - in_buf.objects[1].linear_vel;
+		float impulse_mag = (-(1 + restitution) * dot(rel_vel, collision_normal))
+			/ (dot(collision_normal, collision_normal) * (1.0 / a_mass + 1.0 / b_mass));
+		vec3 linear_impulse = impulse_mag * collision_normal;
 
 		// This seems like it should be really slow, but somehow it isn't.
-		atomicAdd(out_buf.force.x, force.x);
-		atomicAdd(out_buf.force.y, force.y);
-		atomicAdd(out_buf.force.z, force.z);
-		atomicAdd(out_buf.torque.x, torque.x);
-		atomicAdd(out_buf.torque.y, torque.y);
-		atomicAdd(out_buf.torque.z, torque.z);
+		atomicAdd(out_buf.linear_impulse.x, linear_impulse.x);
+		atomicAdd(out_buf.linear_impulse.y, linear_impulse.y);
+		atomicAdd(out_buf.linear_impulse.z, linear_impulse.z);
+		atomicAdd(out_buf.collision_count, 1);
 	}
 }
