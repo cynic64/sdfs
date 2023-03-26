@@ -42,19 +42,21 @@ const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_UNORM;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 const VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 
-// I think specifying `packed` and `aligned` is the easiest way to guarantee gcc puts things at the
-// offsets I want. `aligned` is obviously needed, and I think without `packed` things could
-// theoretically get aligned but be spread really far apart.
-struct __attribute__((packed)) PushConstants {
+// aligned(16) only aligns the start of the structure, not the members. I don't think it's necessary
+// but gcc complains otherwise.
+struct __attribute__((packed, aligned(16))) PushConstants {
         // Pad to vec4 because std140
-        vec4 iResolution;
-        vec4 iMouse;
-        float iFrame[1];
-        float iTime[1];
+        vec4 iResolution; // vec2
+        vec4 iMouse;      // float
+                          // floats get packed together in std140...
+        float iFrame;
+        float iTime;
+        // But the next vec4 will be 16-byte-aligned again
+        vec2 _pad;
         // Camera stuff
-        __attribute__((aligned(16))) vec4 forward;
-        vec4 eye;
-        vec4 dir;
+        vec4 forward; // vec3
+        vec4 eye;     // vec3
+        vec4 dir;     // vec3
         mat4 view;
         mat4 proj;
 };
@@ -63,42 +65,38 @@ struct __attribute__((packed)) PushConstants {
 #define MAX_OBJECTS 512
 #define DEBUG_MAX_LINES 65536
 
-struct __attribute__((packed)) Object {
-        int32_t type;
-        __attribute__((aligned(16))) mat4 transform;
+struct __attribute__((packed, aligned(16))) Object {
+        int32_t type[4]; // int
+        mat4 transform;
+
+        // Stuff for physics
+        vec4 pos; // vec3
+        mat4 orientation;
+        vec4 linear_vel;  // vec3
+        vec4 angular_vel; // vec3
 };
 
-struct __attribute__((packed)) Scene {
-        int32_t count;
-
-        __attribute__((aligned(16))) struct Object objects[MAX_OBJECTS];
+struct __attribute__((packed, aligned(16))) Scene {
+        int32_t count[4]; // int
+        struct Object objects[MAX_OBJECTS];
 };
 
-struct __attribute__((packed)) ComputeOutput {
-        // Really these are vec3's, but std140 pads them to vec4
-        vec4 force;
+struct __attribute__((packed, aligned(16))) ComputeOut {
+        vec4 force; // vec3
 
         // Derivative of the angular velocity
-        __attribute__((aligned(16))) vec4 torque;
+        vec4 torque; // vec3
+
+        // Instantaneous change in velocity
+        vec4 linear_impulse; // vec3
 };
 
 // Gets passed to debug pass. Yes, I know I could have just used a vertex buffer, but this is more
 // flexible if I want to include more stuff later. It's a debug layer, performance is less
 // important.
-struct __attribute__((packed)) Debug {
-        // Really these are vec3, but std140 alignment makes everything take up as much space as
-        // vec4.
-        vec4 line_poss[DEBUG_MAX_LINES];
-        vec4 line_dirs[DEBUG_MAX_LINES];
-};
-
-struct Velocities {
-        vec3 pos;
-        mat4 orientation;
-
-        vec3 linear[MAX_OBJECTS];
-        // Axis of rotation. Magnitude is rotation speed.
-        vec3 angular[MAX_OBJECTS];
+struct __attribute__((packed, aligned(16))) Debug {
+        vec4 line_poss[DEBUG_MAX_LINES]; // vec3[]
+        vec4 line_dirs[DEBUG_MAX_LINES]; // vec3[]
 };
 
 // This stuff exists for every concurrent frame
@@ -132,27 +130,16 @@ void sync_set_destroy(VkDevice device, struct SyncSet *sync_set) {
 }
 
 void get_init_data(struct Scene *data) {
-        data->count = 2;
+        bzero(data, sizeof(struct Scene));
+        data->count[0] = 2;
         // Cube 1
-        data->objects[0].type = 1;
-        glm_translate_make(data->objects[0].transform, (vec3){0, 2.5, 0});
-        glm_scale(data->objects[0].transform, (vec3){1, 1, 1});
+        data->objects[0].type[0] = 1;
+        data->objects[0].pos[1] = 2.5;
+	glm_mat4_identity(data->objects[0].orientation);
 
         // Cube 2
-        data->objects[1].type = 5;
-        // Note that these happen in the reverse order, the scale is done first. It's like how when
-        // you apply model-view-projection in vertex shader you do P*V*M*pos.
-        glm_translate_make(data->objects[1].transform, (vec3){0, 0, 0});
-        glm_scale(data->objects[1].transform, (vec3){1, 1, 1});
-
-        // Fractal
-        data->objects[2].type = 2;
-        glm_translate_make(data->objects[2].transform, (vec3){6, 0, 0});
-        glm_scale(data->objects[2].transform, (vec3){3, 3, 3});
-
-        // Cone
-        data->objects[3].type = 4;
-        glm_translate_make(data->objects[3].transform, (vec3){12, 0, 0});
+        data->objects[1].type[0] = 1;
+	glm_mat4_identity(data->objects[1].orientation);
 }
 
 // Adapted from https://varunagrawal.github.io/2020/02/11/fast-orthogonalization/
@@ -251,11 +238,11 @@ int main() {
         struct Buffer compute_out_staging;
         buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      sizeof(struct ComputeOutput), &compute_out_staging);
-        struct ComputeOutput *compute_out_staging_mapped;
-        vkMapMemory(base.device, compute_out_staging.mem, 0, sizeof(struct ComputeOutput), 0,
+                      sizeof(struct ComputeOut), &compute_out_staging);
+        struct ComputeOut *compute_out_staging_mapped;
+        vkMapMemory(base.device, compute_out_staging.mem, 0, sizeof(struct ComputeOut), 0,
                     (void **)&compute_out_staging_mapped);
-        bzero(compute_out_staging_mapped, sizeof(struct ComputeOutput));
+        bzero(compute_out_staging_mapped, sizeof(struct ComputeOut));
         vkUnmapMemory(base.device, compute_out_staging.mem);
 
         // Buffer for graphics
@@ -278,10 +265,6 @@ int main() {
                     (void **)&scene_data);
         get_init_data(scene_data);
 
-        struct Velocities velocities = {0};
-        velocities.pos[1] = 3;
-        glm_mat4_identity(velocities.orientation);
-
         VkCommandBuffer copy_cbuf;
         cbuf_alloc(base.device, base.cpool, &copy_cbuf);
 
@@ -292,12 +275,12 @@ int main() {
                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Scene),
                               &compute_in_bufs[i]);
-                // And outputs ComputeOutput.
+                // And outputs ComputeOut.
                 buffer_create(base.phys_dev, base.device,
                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                                       VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                       VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct ComputeOutput),
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct ComputeOut),
                               &compute_out_bufs[i]);
 
                 // Graphics shader takes Scene as input, we'll fill it with the latest data just
@@ -317,7 +300,7 @@ int main() {
         // This is so we can read data back out
         buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      sizeof(struct ComputeOutput), &compute_buf_reader);
+                      sizeof(struct ComputeOut), &compute_buf_reader);
 
         // Descriptors
         struct DescriptorInfo compute_in_desc = {0};
@@ -624,50 +607,56 @@ int main() {
                 }
 
                 if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
-                        // Keys to rotate sphere
+                        // Keys to rotate cube
                         if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation, speed_multiplier * 0.001,
-                                           (vec3){1, 0, 0});
+                                glm_rotate(scene_data->objects[0].orientation,
+                                           speed_multiplier * 0.001, (vec3){1, 0, 0});
                         }
                         if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation, -speed_multiplier * 0.001,
-                                           (vec3){1, 0, 0});
+                                glm_rotate(scene_data->objects[0].orientation,
+                                           -speed_multiplier * 0.001, (vec3){1, 0, 0});
                         }
                         if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation, speed_multiplier * 0.001,
-                                           (vec3){0, 0, 1});
+                                glm_rotate(scene_data->objects[0].orientation,
+                                           speed_multiplier * 0.001, (vec3){0, 0, 1});
                         }
                         if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation, -speed_multiplier * 0.001,
-                                           (vec3){0, 0, 1});
+                                glm_rotate(scene_data->objects[0].orientation,
+                                           -speed_multiplier * 0.001, (vec3){0, 0, 1});
                         }
                         if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation, speed_multiplier * 0.001,
-                                           (vec3){0, 1, 0});
+                                glm_rotate(scene_data->objects[0].orientation,
+                                           speed_multiplier * 0.001, (vec3){0, 1, 0});
                         }
                         if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation, -speed_multiplier * 0.001,
-                                           (vec3){0, 1, 0});
+                                glm_rotate(scene_data->objects[0].orientation,
+                                           -speed_multiplier * 0.001, (vec3){0, 1, 0});
                         }
                 } else {
-                        // Keys to move sphere around
+                        // Keys to move cube around
                         if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
-                                velocities.pos[2] += MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                scene_data->objects[0].pos[2] +=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-                                velocities.pos[2] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                scene_data->objects[0].pos[2] -=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
-                                velocities.pos[0] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                scene_data->objects[0].pos[0] -=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
-                                velocities.pos[0] += MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                scene_data->objects[0].pos[0] +=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-                                velocities.pos[1] += MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                scene_data->objects[0].pos[1] +=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
-                                velocities.pos[1] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                scene_data->objects[0].pos[1] -=
+                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                 }
 
@@ -693,7 +682,7 @@ int main() {
                             compute_in_bufs[frame_idx].handle, sizeof(struct Scene));
                 // Also reset compute buffer's output
                 buffer_copy(base.queue, copy_cbuf, compute_out_staging.handle,
-                            compute_out_bufs[frame_idx].handle, sizeof(struct ComputeOutput));
+                            compute_out_bufs[frame_idx].handle, sizeof(struct ComputeOut));
 
                 // Record compute dispatch
                 vkResetCommandBuffer(compute_cbuf, 0);
@@ -738,11 +727,11 @@ int main() {
 
                 // Copy what the compute shader outputted to a CPU-visible buffer
                 buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
-                            compute_buf_reader.handle, sizeof(struct ComputeOutput));
+                            compute_buf_reader.handle, sizeof(struct ComputeOut));
                 // Now actually read it
-                struct ComputeOutput *compute_out_mapped;
-                res = vkMapMemory(base.device, compute_buf_reader.mem, 0,
-                                  sizeof(struct ComputeOutput), 0, (void **)&compute_out_mapped);
+                struct ComputeOut *compute_out_mapped;
+                res = vkMapMemory(base.device, compute_buf_reader.mem, 0, sizeof(struct ComputeOut),
+                                  0, (void **)&compute_out_mapped);
                 assert(res == VK_SUCCESS);
 
                 struct Debug *debug_in_mapped;
@@ -770,31 +759,32 @@ int main() {
                 angular_sum[1] *= 0.00002;
                 angular_sum[2] *= 0.00002;
 
-                velocities.linear[0][0] += linear_sum[0];
-                velocities.linear[0][1] += linear_sum[1];
-                velocities.linear[0][2] += linear_sum[2];
+                scene_data->objects[0].linear_vel[0] += linear_sum[0];
+                scene_data->objects[0].linear_vel[1] += linear_sum[1];
+                scene_data->objects[0].linear_vel[2] += linear_sum[2];
 
-                velocities.angular[0][0] += angular_sum[0];
-                velocities.angular[0][1] += angular_sum[1];
-                velocities.angular[0][2] += angular_sum[2];
+                scene_data->objects[0].angular_vel[0] += angular_sum[0];
+                scene_data->objects[0].angular_vel[1] += angular_sum[1];
+                scene_data->objects[0].angular_vel[2] += angular_sum[2];
 
                 // Apply gravity, but only to first object
-                velocities.linear[0][1] -= 0.0005;
+                scene_data->objects[0].linear_vel[1] -= 0.0005;
 
                 // Apply world's simplest drag model
-                velocities.linear[0][0] *= 0.99;
-                velocities.linear[0][1] *= 0.99;
-                velocities.linear[0][2] *= 0.99;
+                scene_data->objects[0].linear_vel[0] *= 0.99;
+                scene_data->objects[0].linear_vel[1] *= 0.99;
+                scene_data->objects[0].linear_vel[2] *= 0.99;
 
-                velocities.angular[0][0] *= 0.99;
-                velocities.angular[0][1] *= 0.99;
-                velocities.angular[0][2] *= 0.99;
+                scene_data->objects[0].angular_vel[0] *= 0.99;
+                scene_data->objects[0].angular_vel[1] *= 0.99;
+                scene_data->objects[0].angular_vel[2] *= 0.99;
 
                 // Apply linear velocity, just to first object for now
-                velocities.pos[0] += velocities.linear[0][0];
-                velocities.pos[1] += velocities.linear[0][1];
-                velocities.pos[2] += velocities.linear[0][2];
+                scene_data->objects[0].pos[0] += scene_data->objects[0].linear_vel[0];
+                scene_data->objects[0].pos[1] += scene_data->objects[0].linear_vel[1];
+                scene_data->objects[0].pos[2] += scene_data->objects[0].linear_vel[2];
 
+                /*
                 // Apply angular velocity
                 vec3 omega;
                 memcpy(omega, velocities.angular[0], sizeof(vec3));
@@ -811,12 +801,18 @@ int main() {
                                 velocities.orientation[i][j] -= derivative[i][j];
                         }
                 }
+                */
 
-                reorthogonalize(velocities.orientation, velocities.orientation);
+                reorthogonalize(scene_data->objects[0].orientation,
+                                scene_data->objects[0].orientation);
 
-                mat4 translate;
-                glm_translate_make(translate, velocities.pos);
-                glm_mat4_mul(translate, velocities.orientation, scene_data->objects[0].transform);
+                // Generate all transform matrices from position and orientation
+                for (int i = 0; i < scene_data->count[0]; i++) {
+                        mat4 translate;
+                        glm_translate_make(translate, scene_data->objects[i].pos);
+                        glm_mat4_mul(translate, scene_data->objects[i].orientation,
+                                     scene_data->objects[i].transform);
+                }
 
                 total_collision_time += timer_get_elapsed(&start_time);
 
@@ -869,8 +865,8 @@ int main() {
                 pushc_data.iMouse[1] = new_mouse_y;
                 pushc_data.iMouse[2] =
                         glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-                pushc_data.iFrame[0] = frame_ct;
-                pushc_data.iTime[0] = timer_get_elapsed(&start_time);
+                pushc_data.iFrame = frame_ct;
+                pushc_data.iTime = timer_get_elapsed(&start_time);
                 memcpy(pushc_data.forward, camera.forward, sizeof(camera.forward));
                 memcpy(pushc_data.eye, camera.eye, sizeof(camera.eye));
                 pushc_data.dir[0] = camera.yaw;

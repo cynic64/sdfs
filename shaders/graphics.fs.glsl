@@ -17,6 +17,11 @@ layout (push_constant, std140) uniform PushConstants {
 struct Object {
 	int type;
 	mat4 transform;
+
+	vec3 pos;
+	mat4 orientation;
+	vec3 linear_vel;
+	vec3 angular_vel;
 };
 
 layout(std140, binding = 0) buffer Scene {
