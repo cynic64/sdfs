@@ -62,9 +62,6 @@ struct __attribute__((packed)) PushConstants {
 // Both must be the same in ./shaders_include/constants.glsl
 #define MAX_OBJECTS 512
 #define DEBUG_MAX_LINES 65536
-// The compute shader evaluates collisions at positions within a 4x4x4 box. This is how many cubes
-// the box should be divided into along each side (so this is 40^3 cubes total).
-#define COMPUTE_SAMPLE_COUNT 40
 
 struct __attribute__((packed)) Object {
         int32_t type;
@@ -705,7 +702,7 @@ int main() {
                 vkCmdBindDescriptorSets(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
                                         compute_pipe_layout, 0, 1, &compute_sets[frame_idx], 0,
                                         NULL);
-                vkCmdDispatch(compute_cbuf, 10, 10, 10);
+                vkCmdDispatch(compute_cbuf, 20, 20, 20);
                 res = vkEndCommandBuffer(compute_cbuf);
                 assert(res == VK_SUCCESS);
 
@@ -785,13 +782,13 @@ int main() {
                 velocities.linear[0][1] -= 0.0005;
 
                 // Apply world's simplest drag model
-                velocities.linear[0][0] *= 0.95;
-                velocities.linear[0][1] *= 0.95;
-                velocities.linear[0][2] *= 0.95;
+                velocities.linear[0][0] *= 0.99;
+                velocities.linear[0][1] *= 0.99;
+                velocities.linear[0][2] *= 0.99;
 
-                velocities.angular[0][0] *= 0.95;
-                velocities.angular[0][1] *= 0.95;
-                velocities.angular[0][2] *= 0.95;
+                velocities.angular[0][0] *= 0.99;
+                velocities.angular[0][1] *= 0.99;
+                velocities.angular[0][2] *= 0.99;
 
                 // Apply linear velocity, just to first object for now
                 velocities.pos[0] += velocities.linear[0][0];

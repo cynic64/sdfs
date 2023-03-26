@@ -19,7 +19,7 @@ layout(std140, binding = 1) buffer ComputeOut {
 	vec3 total_torque;
 } out_buf;
 
-layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
 #include common.glsl
 
@@ -62,9 +62,9 @@ mat4 normal_rotation(vec3 normal) {
 
 void main() {
 	// Compute intersection between first 2 objects
-	float x = gl_GlobalInvocationID.x * 0.05 - 2 + 0.025;
-	float y = gl_GlobalInvocationID.y * 0.05 - 2 + 0.025;
-	float z = gl_GlobalInvocationID.z * 0.05 - 2 + 0.025;
+	float x = gl_GlobalInvocationID.x * 0.025 - 1 + 0.0125;
+	float y = gl_GlobalInvocationID.y * 0.025 - 1 + 0.0125;
+	float z = gl_GlobalInvocationID.z * 0.025 - 1 + 0.0125;
 
 	vec3 point = vec3(x, y, z);
 	float dist0 = scene_sdf(in_buf.objects[0].type, in_buf.objects[0].transform, point);
