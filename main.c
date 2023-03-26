@@ -29,8 +29,9 @@
 #include <stdlib.h>
 #include <sys/param.h>
 
-const char *DEVICE_EXTS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-const int DEVICE_EXT_CT = 1;
+const char *DEVICE_EXTS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+                             VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME};
+const int DEVICE_EXT_CT = 2;
 
 const double MOUSE_SENSITIVITY_FACTOR = 0.001;
 const float MOVEMENT_SPEED = 0.6F;
@@ -78,10 +79,10 @@ struct __attribute__((packed)) Scene {
 
 struct __attribute__((packed)) ComputeOutput {
         // Really these are vec3's, but std140 pads them to vec4
-        vec4 forces[COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT];
-        // Sum these up to get the derivative of the angular velocity
-        __attribute__((aligned(16)))
-        vec4 torques[COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT * COMPUTE_SAMPLE_COUNT];
+        vec4 force;
+
+        // Derivative of the angular velocity
+        __attribute__((aligned(16))) vec4 torque;
 };
 
 // Gets passed to debug pass. Yes, I know I could have just used a vertex buffer, but this is more
@@ -95,11 +96,11 @@ struct __attribute__((packed)) Debug {
 };
 
 struct Velocities {
-	vec3 pos;
-	mat4 orientation;
+        vec3 pos;
+        mat4 orientation;
 
         vec3 linear[MAX_OBJECTS];
-	// Axis of rotation. Magnitude is rotation speed.
+        // Axis of rotation. Magnitude is rotation speed.
         vec3 angular[MAX_OBJECTS];
 };
 
@@ -201,8 +202,13 @@ int main() {
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
         // Base
+        VkPhysicalDeviceShaderAtomicFloatFeaturesEXT atomic_features = {0};
+        atomic_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_FEATURES_EXT;
+        atomic_features.shaderBufferFloat32AtomicAdd = VK_TRUE;
+
         struct Base base;
-        base_create(window, 1, 1, 0, NULL, DEVICE_EXT_CT, DEVICE_EXTS, &base);
+        base_create(window, VK_API_VERSION_1_3, 1, 1, 0, NULL, DEVICE_EXT_CT, DEVICE_EXTS,
+                    &atomic_features, &base);
 
         // Swapchain
         struct Swapchain swapchain;
@@ -239,9 +245,23 @@ int main() {
         VkRenderPass rpass;
         rpass_color_depth(base.device, swapchain.format, DEPTH_FORMAT, &rpass);
 
-        // Allocate storage buffers
+        // Buffers for compute
         struct Buffer compute_in_bufs[CONCURRENT_FRAMES], compute_out_bufs[CONCURRENT_FRAMES],
                 compute_buf_reader;
+        // The accumulated force and torque needs to be reset each frame, and since all the compute
+        // shaders run in parallel I think overwriting the old data with a zero buffer is the only
+        // way to do it.
+        struct Buffer compute_out_staging;
+        buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      sizeof(struct ComputeOutput), &compute_out_staging);
+        struct ComputeOutput *compute_out_staging_mapped;
+        vkMapMemory(base.device, compute_out_staging.mem, 0, sizeof(struct ComputeOutput), 0,
+                    (void **)&compute_out_staging_mapped);
+        bzero(compute_out_staging_mapped, sizeof(struct ComputeOutput));
+        vkUnmapMemory(base.device, compute_out_staging.mem);
+
+        // Buffer for graphics
         struct Buffer graphics_in_bufs[CONCURRENT_FRAMES];
         struct Buffer scene_staging;
         buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -262,8 +282,8 @@ int main() {
         get_init_data(scene_data);
 
         struct Velocities velocities = {0};
-	velocities.pos[1] = 3;
-	glm_mat4_identity(velocities.orientation);
+        velocities.pos[1] = 3;
+        glm_mat4_identity(velocities.orientation);
 
         VkCommandBuffer copy_cbuf;
         cbuf_alloc(base.device, base.cpool, &copy_cbuf);
@@ -609,54 +629,48 @@ int main() {
                 if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
                         // Keys to rotate sphere
                         if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation,
-                                           speed_multiplier * 0.001, (vec3){1, 0, 0});
+                                glm_rotate(velocities.orientation, speed_multiplier * 0.001,
+                                           (vec3){1, 0, 0});
                         }
                         if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation,
-                                           -speed_multiplier * 0.001, (vec3){1, 0, 0});
+                                glm_rotate(velocities.orientation, -speed_multiplier * 0.001,
+                                           (vec3){1, 0, 0});
                         }
                         if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation,
-                                           speed_multiplier * 0.001, (vec3){0, 0, 1});
+                                glm_rotate(velocities.orientation, speed_multiplier * 0.001,
+                                           (vec3){0, 0, 1});
                         }
                         if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation,
-                                           -speed_multiplier * 0.001, (vec3){0, 0, 1});
+                                glm_rotate(velocities.orientation, -speed_multiplier * 0.001,
+                                           (vec3){0, 0, 1});
                         }
                         if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation,
-                                           speed_multiplier * 0.001, (vec3){0, 1, 0});
+                                glm_rotate(velocities.orientation, speed_multiplier * 0.001,
+                                           (vec3){0, 1, 0});
                         }
                         if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
-                                glm_rotate(velocities.orientation,
-                                           -speed_multiplier * 0.001, (vec3){0, 1, 0});
+                                glm_rotate(velocities.orientation, -speed_multiplier * 0.001,
+                                           (vec3){0, 1, 0});
                         }
                 } else {
                         // Keys to move sphere around
                         if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
-                                velocities.pos[2] +=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                velocities.pos[2] += MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-                                velocities.pos[2] -=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                velocities.pos[2] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
-                                velocities.pos[0] -=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                velocities.pos[0] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
-                                velocities.pos[0] +=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                velocities.pos[0] += MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-                                velocities.pos[1] +=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                velocities.pos[1] += MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                         if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
-                                velocities.pos[1] -=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
+                                velocities.pos[1] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
                         }
                 }
 
@@ -680,6 +694,9 @@ int main() {
                 // Copy latest data to compute shader input
                 buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
                             compute_in_bufs[frame_idx].handle, sizeof(struct Scene));
+                // Also reset compute buffer's output
+                buffer_copy(base.queue, copy_cbuf, compute_out_staging.handle,
+                            compute_out_bufs[frame_idx].handle, sizeof(struct ComputeOutput));
 
                 // Record compute dispatch
                 vkResetCommandBuffer(compute_cbuf, 0);
@@ -736,70 +753,25 @@ int main() {
                                   (void **)&debug_in_mapped);
 
                 // Update object positions and debug input
+                struct timespec start_time = timer_start();
+
                 int debug_line_count = 0;
                 vec3 linear_sum = {0, 0, 0};
                 vec3 angular_sum = {0, 0, 0};
-                for (int i = 0; i < 40; i++) {
-                        for (int j = 0; j < 40; j++) {
-                                for (int k = 0; k < 40; k++) {
-                                        float fx = compute_out_mapped
-                                                           ->forces[40 * 40 * i + 40 * j + k][0];
-                                        float fy = compute_out_mapped
-                                                           ->forces[40 * 40 * i + 40 * j + k][1];
-                                        float fz = compute_out_mapped
-                                                           ->forces[40 * 40 * i + 40 * j + k][2];
-
-                                        float tx = compute_out_mapped
-                                                           ->torques[40 * 40 * i + 40 * j + k][0];
-                                        float ty = compute_out_mapped
-                                                           ->torques[40 * 40 * i + 40 * j + k][1];
-                                        float tz = compute_out_mapped
-                                                           ->torques[40 * 40 * i + 40 * j + k][2];
-
-                                        if (isnan(fx) || isnan(fy) || isnan(fz) || isnan(tx) ||
-                                            isnan(ty) || isnan(tz)) {
-                                                printf("Cell at %d %d %d is nan!\n", i, j, k);
-                                                continue;
-                                        }
-
-                                        linear_sum[0] += fx;
-                                        linear_sum[1] += fy;
-                                        linear_sum[2] += fz;
-
-                                        angular_sum[0] += tx;
-                                        angular_sum[1] += ty;
-                                        angular_sum[2] += tz;
-
-                                        // Maybe add vector to debug lines
-                                        if (debug_line_count + 1 >= DEBUG_MAX_LINES) {
-                                                continue;
-                                        }
-
-                                        int idx = debug_line_count;
-                                        // Has to match how it's calculated in `compute.glsl`
-                                        debug_in_mapped->line_poss[idx][0] = i * 0.1 - 2 + 0.05;
-                                        debug_in_mapped->line_poss[idx][1] = j * 0.1 - 2 + 0.05;
-                                        debug_in_mapped->line_poss[idx][2] = k * 0.1 - 2 + 0.05;
-
-                                        debug_in_mapped->line_dirs[idx][0] = tx;
-                                        debug_in_mapped->line_dirs[idx][1] = ty;
-                                        debug_in_mapped->line_dirs[idx][2] = tz;
-                                        debug_line_count++;
-                                }
-                        }
-                }
+                memcpy(linear_sum, compute_out_mapped->force, sizeof(vec3));
+                memcpy(angular_sum, compute_out_mapped->torque, sizeof(vec3));
 
                 vkUnmapMemory(base.device, compute_buf_reader.mem);
                 vkUnmapMemory(base.device, debug_staging.mem);
 
                 // printf("Sum: %5.2f %5.2f %5.2f\n", sum[0], sum[1], sum[0]);
-                linear_sum[0] *= 0.00001;
-                linear_sum[1] *= 0.00001;
-                linear_sum[2] *= 0.00001;
+                linear_sum[0] *= 0.000001;
+                linear_sum[1] *= 0.000001;
+                linear_sum[2] *= 0.000001;
 
-                angular_sum[0] *= 0.00002;
-                angular_sum[1] *= 0.00002;
-                angular_sum[2] *= 0.00002;
+                angular_sum[0] *= 0.000002;
+                angular_sum[1] *= 0.000002;
+                angular_sum[2] *= 0.000002;
 
                 velocities.linear[0][0] += linear_sum[0];
                 velocities.linear[0][1] += linear_sum[1];
@@ -822,13 +794,13 @@ int main() {
                 velocities.angular[0][2] *= 0.95;
 
                 // Apply linear velocity, just to first object for now
-		velocities.pos[0] += velocities.linear[0][0];
-		velocities.pos[1] += velocities.linear[0][1];
-		velocities.pos[2] += velocities.linear[0][2];
+                velocities.pos[0] += velocities.linear[0][0];
+                velocities.pos[1] += velocities.linear[0][1];
+                velocities.pos[2] += velocities.linear[0][2];
 
                 // Apply angular velocity
                 vec3 omega;
-		memcpy(omega, velocities.angular[0], sizeof(vec3));
+                memcpy(omega, velocities.angular[0], sizeof(vec3));
                 mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
                                     {omega[2], 0, -omega[0], 0},
                                     {-omega[1], omega[0], 0, 0},
@@ -845,9 +817,11 @@ int main() {
 
                 reorthogonalize(velocities.orientation, velocities.orientation);
 
-		mat4 translate;
-		glm_translate_make(translate, velocities.pos);
-		glm_mat4_mul(translate, velocities.orientation, scene_data->objects[0].transform);
+                mat4 translate;
+                glm_translate_make(translate, velocities.pos);
+                glm_mat4_mul(translate, velocities.orientation, scene_data->objects[0].transform);
+
+                total_collision_time += timer_get_elapsed(&start_time);
 
                 /*
                 printf("New pos: %5.2f %5.2f %5.2f\n", scene_data->objects[0].transform[3][0],
@@ -988,7 +962,7 @@ int main() {
 
         double elapsed = timer_get_elapsed(&start_time);
         double fps = (double)frame_ct / elapsed;
-        printf("FPS: %.2f, total frames: %d\n", fps, frame_ct);
+        printf("FPS: %.2f (%.2fms), total frames: %d\n", fps, elapsed / frame_ct * 1000, frame_ct);
         printf("Average collision time: %.2f ms\n", total_collision_time / frame_ct * 1000);
 
         vkDeviceWaitIdle(base.device);
@@ -1023,6 +997,7 @@ int main() {
         buffer_destroy(base.device, &scene_staging);
         buffer_destroy(base.device, &compute_buf_reader);
         buffer_destroy(base.device, &debug_staging);
+        buffer_destroy(base.device, &compute_out_staging);
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 buffer_destroy(base.device, &compute_in_bufs[i]);
                 buffer_destroy(base.device, &compute_out_bufs[i]);

@@ -1,4 +1,6 @@
 #version 450
+#extension GL_KHR_shader_subgroup_arithmetic : enable
+#extension GL_EXT_shader_atomic_float : enable
 
 #include constants.glsl
 
@@ -13,11 +15,11 @@ layout(std140, binding = 0) buffer SceneIn {
 } in_buf;
 
 layout(std140, binding = 1) buffer ComputeOut {
-	vec3 forces[40*40*40];
-	vec3 torques[40*40*40];
+	vec3 total_force;
+	vec3 total_torque;
 } out_buf;
 
-layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 #include common.glsl
 
@@ -60,17 +62,14 @@ mat4 normal_rotation(vec3 normal) {
 
 void main() {
 	// Compute intersection between first 2 objects
-	float x = gl_GlobalInvocationID.x * 0.1 - 2 + 0.05;
-	float y = gl_GlobalInvocationID.y * 0.1 - 2 + 0.05;
-	float z = gl_GlobalInvocationID.z * 0.1 - 2 + 0.05;
+	float x = gl_GlobalInvocationID.x * 0.05 - 2 + 0.025;
+	float y = gl_GlobalInvocationID.y * 0.05 - 2 + 0.025;
+	float z = gl_GlobalInvocationID.z * 0.05 - 2 + 0.025;
 
 	vec3 point = vec3(x, y, z);
 	float dist0 = scene_sdf(in_buf.objects[0].type, in_buf.objects[0].transform, point);
 	float dist1 = scene_sdf(in_buf.objects[1].type, in_buf.objects[1].transform, point);
 
-	uint index = gl_GlobalInvocationID.x*40*40
-		+ gl_GlobalInvocationID.y*40
-		+ gl_GlobalInvocationID.z;
 	if (dist0 <= 0 && dist1 <= 0) {
 		vec3 my_normal = calc_normal(in_buf.objects[0].type,
 							     in_buf.objects[0].transform, point);
@@ -97,11 +96,13 @@ void main() {
 		// something
 		// man this hurts my brain
 		vec3 torque = cross(r, force);
-		
-		out_buf.forces[index] = force;
-		out_buf.torques[index] = torque;
-	} else {
-		out_buf.forces[index] = vec3(0);
-		out_buf.torques[index] = vec3(0);
+
+		// This seems like it should be really slow, but somehow it isn't.
+		atomicAdd(out_buf.total_force.x, force.x);
+		atomicAdd(out_buf.total_force.y, force.y);
+		atomicAdd(out_buf.total_force.z, force.z);
+		atomicAdd(out_buf.total_torque.x, torque.x);
+		atomicAdd(out_buf.total_torque.y, torque.y);
+		atomicAdd(out_buf.total_torque.z, torque.z);
 	}
 }
