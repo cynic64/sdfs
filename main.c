@@ -139,7 +139,7 @@ void get_init_data(struct Scene *data) {
         glm_scale(data->objects[0].transform, (vec3){1, 1, 1});
 
         // Cube 2
-        data->objects[1].type = 1;
+        data->objects[1].type = 5;
         // Note that these happen in the reverse order, the scale is done first. It's like how when
         // you apply model-view-projection in vertex shader you do P*V*M*pos.
         glm_translate_make(data->objects[1].transform, (vec3){0, 0, 0});
@@ -762,13 +762,13 @@ int main() {
                 vkUnmapMemory(base.device, debug_staging.mem);
 
                 // printf("Sum: %5.2f %5.2f %5.2f\n", sum[0], sum[1], sum[0]);
-                linear_sum[0] *= 0.000001;
-                linear_sum[1] *= 0.000001;
-                linear_sum[2] *= 0.000001;
+                linear_sum[0] *= 0.00001;
+                linear_sum[1] *= 0.00001;
+                linear_sum[2] *= 0.00001;
 
-                angular_sum[0] *= 0.000002;
-                angular_sum[1] *= 0.000002;
-                angular_sum[2] *= 0.000002;
+                angular_sum[0] *= 0.00002;
+                angular_sum[1] *= 0.00002;
+                angular_sum[2] *= 0.00002;
 
                 velocities.linear[0][0] += linear_sum[0];
                 velocities.linear[0][1] += linear_sum[1];

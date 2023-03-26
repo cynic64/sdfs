@@ -15,6 +15,32 @@ float sd_cross(vec3 point) {
 	return min(a, min(b, c));
 }
 
+// From http://blog.hvidtfeldts.net/index.php/2011/09/distance-estimated-3d-fractals-v-the-mandelbulb-different-de-approximations/
+float sd_mandelbulb(vec3 pos) {
+	vec3 z = pos;
+	float dr = 1.0;
+	float r = 0.0;
+	for (int i = 0; i < 32; i++) {
+		r = length(z);
+		if (r>2) break;
+		
+		// convert to polar coordinates
+		float theta = acos(z.z/r);
+		float phi = atan(z.y,z.x);
+		dr =  pow( r, 8-1.0)*8*dr + 1.0;
+		
+		// scale and rotate the point
+		float zr = pow( r,8);
+		theta = theta*8;
+		phi = phi*8;
+		
+		// convert back to cartesian coordinates
+		z = zr*vec3(sin(theta)*cos(phi), sin(phi)*sin(theta), cos(theta));
+		z+=pos;
+	}
+	return 0.5*log(r)*r/dr;
+}
+
 // From https://www.shadertoy.com/view/4sX3Rn
 const mat3 ma = mat3( 0.60, 0.00,  0.80,
                       0.00, 1.00,  0.00,
@@ -103,6 +129,8 @@ float scene_sdf(int type, mat4 transform, vec3 point) {
 		dist = sd_box_frame(point_rel, vec3(1), 0.05);
 	} else if (type == 4) {
 		dist = sd_pyramid(point_rel, 1);
+	} else if (type == 5) {
+		dist = sd_mandelbulb(point_rel);
 	} else {
 		dist = 0;
 	}
