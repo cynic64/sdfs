@@ -702,9 +702,9 @@ int main() {
                 memcpy(linear_accel, compute_out_mapped->force, sizeof(vec3));
                 memcpy(angular_accel, compute_out_mapped->torque, sizeof(vec3));
 
-                linear_accel[0] *= 0.00001;
-                linear_accel[1] *= 0.00001;
-                linear_accel[2] *= 0.00001;
+                linear_accel[0] *= 0.000001;
+                linear_accel[1] *= 0.000001;
+                linear_accel[2] *= 0.000001;
 
                 angular_accel[0] *= 0.00002;
                 angular_accel[1] *= 0.00002;
@@ -792,16 +792,15 @@ int main() {
                 printf("Total linear impulse: %5.2f %5.2f %5.2f\n",
                        compute_out_mapped->linear_impulse[0], compute_out_mapped->linear_impulse[1],
                        compute_out_mapped->linear_impulse[2]);
-                // Multiplying by 0.1 here shouldn't be necessary, something's not quite right
                 float mass = 1;
                 uint32_t col_count = compute_out_mapped->collision_count;
                 if (col_count > 0) {
                         scene_data->objects[0].linear_vel[0] +=
-                                compute_out_mapped->linear_impulse[0] / mass * 2 / col_count;
+                                compute_out_mapped->linear_impulse[0] / mass * 1 / col_count;
                         scene_data->objects[0].linear_vel[1] +=
-                                compute_out_mapped->linear_impulse[1] / mass * 2 / col_count;
+                                compute_out_mapped->linear_impulse[1] / mass * 1 / col_count;
                         scene_data->objects[0].linear_vel[2] +=
-                                compute_out_mapped->linear_impulse[2] / mass * 2 / col_count;
+                                compute_out_mapped->linear_impulse[2] / mass * 1 / col_count;
                 }
 
                 // Integrate velocity to position
