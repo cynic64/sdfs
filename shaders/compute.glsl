@@ -35,15 +35,15 @@ layout (std140, binding = 2) buffer DebugIn {
 	vec3 line_dirs[DEBUG_MAX_LINES];
 } debug_buf;
 
-layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 #include common.glsl
 
 void main() {
 	// Compute intersection between first 2 objects
-	float x = gl_GlobalInvocationID.x * 0.025 - 1 + 0.0125;
-	float y = gl_GlobalInvocationID.y * 0.025 - 1 + 0.0125;
-	float z = gl_GlobalInvocationID.z * 0.025 - 1 + 0.0125;
+	float x = gl_GlobalInvocationID.x * 0.0125 - 1 + 0.00625;
+	float y = gl_GlobalInvocationID.y * 0.0125 - 1 + 0.00625;
+	float z = gl_GlobalInvocationID.z * 0.0125 - 1 + 0.00625;
 
 	int a_type = in_buf.objects[0].type, b_type = in_buf.objects[1].type;
 	mat4 a_transform = in_buf.objects[0].transform,
@@ -84,7 +84,7 @@ void main() {
 		//vec3 torque = cross(r, force);
 
 		// 1 = perfectly elastic, 0 = all momentum absorbed on collision
-		float restitution = 0.9;
+		float restitution = 1;
 		// Eventually these should be passed as part of Object
 		float a_mass = 1;
 		// Object B can't be moved, so it has infinite mass
@@ -167,8 +167,8 @@ void main() {
 		//
 		// new_omega = old_omega + a_inertia_inverse * cross(a_from_com, collision_normal * j)
 		//
-		// Or something like that, it's not Chris' article so I guessed. Mass doesn't matter
-		// because it's encoded in the inertia tensor.
+		// Or something like that, it's not in Chris' article so I guessed. Mass doesn't
+		// matter because it's encoded in the inertia tensor.
 		vec3 angular_impulse = a_inertia_inverse
 			* cross(a_from_com, collision_normal * impulse);
 		atomicAdd(out_buf.angular_impulse.x, angular_impulse.x);

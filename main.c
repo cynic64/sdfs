@@ -153,7 +153,7 @@ void get_init_data(struct Scene *data) {
         object_make_transform(&data->objects[0]);
 
         // Cube 2
-        data->objects[1].type[0] = 1;
+        data->objects[1].type[0] = 2;
         glm_mat4_identity(data->objects[1].orientation);
         object_make_transform(&data->objects[1]);
 }
