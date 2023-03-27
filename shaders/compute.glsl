@@ -14,17 +14,26 @@ struct Object {
 	vec3 angular_vel;
 };
 
-layout(std140, binding = 0) buffer readonly Scene {
+layout (std140, binding = 0) buffer readonly Scene {
 	int count;
 	Object objects[];
 } in_buf;
 
-layout(std140, binding = 1) buffer ComputeOut {
+layout (std140, binding = 1) buffer ComputeOut {
 	vec3 force;
 	vec3 torque;
 	vec3 linear_impulse;
 	uint collision_count;
+
+	// Idk where else to put this. Surely there is a better way to set some value to 0 before
+	// all invocations run?
+	uint debug_out_idx;
 } out_buf;
+
+layout (std140, binding = 2) buffer DebugIn {
+	vec3 line_poss[DEBUG_MAX_LINES];
+	vec3 line_dirs[DEBUG_MAX_LINES];
+} debug_buf;
 
 layout (local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 
@@ -57,6 +66,7 @@ void main() {
 		vec3 collision_normal = (-my_normal + other_normal) * 0.5;
 
 		if (length(collision_normal) == 0) return;
+		collision_normal = normalize(collision_normal);
 
 		// Object's center of mass
 		vec3 com = (a_transform * vec4(0, 0, 0, 1)).xyz;
@@ -84,5 +94,12 @@ void main() {
 		atomicAdd(out_buf.linear_impulse.y, linear_impulse.y);
 		atomicAdd(out_buf.linear_impulse.z, linear_impulse.z);
 		atomicAdd(out_buf.collision_count, 1);
+
+		// Add a line to debug view, as long as there is space
+		uint idx = atomicAdd(out_buf.debug_out_idx, 1);
+		if (idx < DEBUG_MAX_LINES) {
+			debug_buf.line_poss[idx] = point;
+			debug_buf.line_dirs[idx] = vec3(collision_normal);
+		}
 	}
 }

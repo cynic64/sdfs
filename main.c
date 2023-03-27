@@ -91,6 +91,7 @@ struct __attribute__((packed, aligned(16))) ComputeOut {
         vec3 linear_impulse;
 
         uint32_t collision_count;
+        uint32_t debug_out_idx;
 };
 
 // Gets passed to debug pass. Yes, I know I could have just used a vertex buffer, but this is more
@@ -264,10 +265,6 @@ int main() {
 
         // Buffers for debug pass
         struct Buffer debug_in_bufs[CONCURRENT_FRAMES];
-        struct Buffer debug_staging;
-        buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      sizeof(struct Debug), &debug_staging);
 
         // Initialize scene staging
         struct Scene *scene_data;
@@ -325,19 +322,18 @@ int main() {
         graphics_in_desc.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         graphics_in_desc.stage = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        // I could reuse graphics_in_desc here but I'd rather not in case I change debug's layout
-        // soon
         struct DescriptorInfo debug_in_desc = {0};
         debug_in_desc.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        debug_in_desc.stage = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        debug_in_desc.stage = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT |
+                              VK_SHADER_STAGE_FRAGMENT_BIT;
 
         // Create descriptor pool
         // Gotta be honest I have no idea what I'm doing here
         VkDescriptorPoolSize dpool_sizes[1] = {0};
         dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        // I think it has to be 4 for each CONCURRENT_FRAME because there's the two descriptors for
-        // the compute stage, the descriptor for the graphics stage and 1 more for debug
-        dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES * 4;
+        // I think it has to be 5 for each CONCURRENT_FRAME because there's the 3 descriptors for
+        // the compute stage, 1 for the graphics stage and 1 more for debug
+        dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES * 5;
 
         VkDescriptorPoolCreateInfo dpool_info = {0};
         dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -352,7 +348,8 @@ int main() {
         assert(res == VK_SUCCESS);
 
         // Now make the sets
-        struct DescriptorInfo compute_descs[] = {compute_in_desc, compute_out_desc};
+        struct DescriptorInfo compute_descs[] = {compute_in_desc, compute_out_desc,
+                                                 debug_in_desc};
         struct SetInfo compute_set_info = {0};
         compute_set_info.desc_ct = sizeof(compute_descs) / sizeof(compute_descs[0]);
         compute_set_info.descs = compute_descs;
@@ -380,11 +377,13 @@ int main() {
 
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 // Set for compute
-                union SetHandle compute_buffers[2] = {0};
+                union SetHandle compute_buffers[3] = {0};
                 compute_buffers[0].buffer.buffer = compute_in_bufs[i].handle;
                 compute_buffers[0].buffer.range = VK_WHOLE_SIZE;
                 compute_buffers[1].buffer.buffer = compute_out_bufs[i].handle;
                 compute_buffers[1].buffer.range = VK_WHOLE_SIZE;
+                compute_buffers[2].buffer.buffer = debug_in_bufs[i].handle;
+                compute_buffers[2].buffer.range = sizeof(struct Debug);
                 assert(sizeof(compute_buffers) / sizeof(compute_buffers[0]) ==
                        compute_set_info.desc_ct);
 
@@ -719,10 +718,10 @@ int main() {
                 scene_data->objects[0].angular_vel[2] += angular_accel[2];
 
                 // Apply gravity, but only to first object
-                scene_data->objects[0].linear_vel[1] -= 0.0005;
+                scene_data->objects[0].linear_vel[1] -= 0.0001;
 
                 // Apply world's simplest drag model
-		/*
+                /*
                 scene_data->objects[0].linear_vel[0] *= 0.99;
                 scene_data->objects[0].linear_vel[1] *= 0.99;
                 scene_data->objects[0].linear_vel[2] *= 0.99;
@@ -730,7 +729,7 @@ int main() {
                 scene_data->objects[0].angular_vel[0] *= 0.99;
                 scene_data->objects[0].angular_vel[1] *= 0.99;
                 scene_data->objects[0].angular_vel[2] *= 0.99;
-		*/
+                */
 
                 // Copy latest data to compute shader input
                 buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
@@ -783,15 +782,18 @@ int main() {
                 // Copy what the compute shader outputted to a CPU-visible buffer
                 buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
                             compute_buf_reader.handle, sizeof(struct ComputeOut));
-                // We only use the results at the beginning of next frame
+                // We only use the results at the beginning of next frame, apart from applying
+                // impulse below
 
                 // Update object positions and debug input
                 struct timespec start_time = timer_start();
 
                 // Apply impulse
+		/*
                 printf("Total linear impulse: %5.2f %5.2f %5.2f\n",
                        compute_out_mapped->linear_impulse[0], compute_out_mapped->linear_impulse[1],
                        compute_out_mapped->linear_impulse[2]);
+		*/
                 float mass = 1;
                 uint32_t col_count = compute_out_mapped->collision_count;
                 if (col_count > 0) {
@@ -847,9 +849,9 @@ int main() {
                 buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
                             graphics_in_bufs[frame_idx].handle, sizeof(struct Scene));
 
-                // Copy debug input
-                buffer_copy(base.queue, copy_cbuf, debug_staging.handle,
-                            debug_in_bufs[frame_idx].handle, sizeof(struct Debug));
+                // Debug the debug buffer...
+                //buffer_copy(base.queue, copy_cbuf, debug_staging.handle,
+		//debug_in_bufs[frame_idx].handle, sizeof(struct Debug));
 
                 // Record graphics commands
                 vkResetCommandBuffer(graphics_cbuf, 0);
@@ -913,8 +915,7 @@ int main() {
                 vkCmdBindDescriptorSets(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         debug_pipe_layout, 0, 1, &debug_sets[frame_idx], 0, NULL);
 
-                int debug_line_count = 1;
-                vkCmdDraw(graphics_cbuf, 2, debug_line_count, 0, 0);
+                vkCmdDraw(graphics_cbuf, 2, DEBUG_MAX_LINES, 0, 0);
 
                 vkCmdEndRenderPass(graphics_cbuf);
 
@@ -1011,7 +1012,6 @@ int main() {
 
         buffer_destroy(base.device, &scene_staging);
         buffer_destroy(base.device, &compute_buf_reader);
-        buffer_destroy(base.device, &debug_staging);
         buffer_destroy(base.device, &compute_out_staging);
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 buffer_destroy(base.device, &compute_in_bufs[i]);

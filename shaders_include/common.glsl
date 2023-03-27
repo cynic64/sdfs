@@ -141,7 +141,7 @@ float scene_sdf(int type, mat4 transform, vec3 point) {
 // Taken from iquilezles.org/articles/normalsSDF/
 // Messing with this is bad juju
 vec3 calc_normal(int type, mat4 transform, vec3 point) {
-    const float h = 0.0002;
+    const float h = 0.00002;
     const vec2 k = vec2(1,-1);
     vec3 n = k.xyy*scene_sdf(type, transform, point + k.xyy*h)
 		     + k.yyx*scene_sdf(type, transform, point + k.yyx*h)
