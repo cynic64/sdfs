@@ -63,7 +63,8 @@ void main() {
 
 		// For deep penetrations, the two might cancel each other out. Oh well, nothing we
 		// can really do.
-		vec3 collision_normal = (-my_normal + other_normal) * 0.5;
+		//vec3 collision_normal = (-my_normal + other_normal) * 0.5;
+		vec3 collision_normal = other_normal;
 
 		if (length(collision_normal) == 0) return;
 		collision_normal = normalize(collision_normal);
@@ -83,7 +84,8 @@ void main() {
 		float restitution = 1;
 		// Eventually these should be passed as part of Object
 		float a_mass = 1;
-		float b_mass = 1;
+		// Object B can't be moved, so it has infinite mass
+		float b_mass = 1 / 0;
 		vec3 rel_vel = in_buf.objects[0].linear_vel - in_buf.objects[1].linear_vel;
 		float impulse_mag = (-(1 + restitution) * dot(rel_vel, collision_normal))
 			/ (dot(collision_normal, collision_normal) * (1.0 / a_mass + 1.0 / b_mass));

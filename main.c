@@ -142,7 +142,7 @@ void get_init_data(struct Scene *data) {
         bzero(data, sizeof(struct Scene));
         data->count[0] = 2;
         // Cube 1
-        data->objects[0].type[0] = 1;
+        data->objects[0].type[0] = 5;
         data->objects[0].pos[1] = 4;
         glm_mat4_identity(data->objects[0].orientation);
         object_make_transform(&data->objects[0]);
@@ -256,6 +256,17 @@ int main() {
         bzero(compute_out_staging_mapped, sizeof(struct ComputeOut));
         vkUnmapMemory(base.device, compute_out_staging.mem);
 
+        // The debug arrows also need to be reset each frame
+        struct Buffer debug_in_staging;
+        buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      sizeof(struct Debug), &debug_in_staging);
+        struct Debug *debug_in_staging_mapped;
+        vkMapMemory(base.device, debug_in_staging.mem, 0, sizeof(struct Debug), 0,
+                    (void **)&debug_in_staging_mapped);
+        bzero(debug_in_staging_mapped, sizeof(struct Debug));
+        vkUnmapMemory(base.device, debug_in_staging.mem);
+
         // Buffer for graphics
         struct Buffer graphics_in_bufs[CONCURRENT_FRAMES];
         struct Buffer scene_staging;
@@ -263,8 +274,12 @@ int main() {
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                       sizeof(struct Scene), &scene_staging);
 
-        // Buffers for debug pass
-        struct Buffer debug_in_bufs[CONCURRENT_FRAMES];
+        // Buffer for debug pass
+        struct Buffer debug_in_buf;
+	buffer_create(base.phys_dev, base.device,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Debug),
+			&debug_in_buf);
 
         // Initialize scene staging
         struct Scene *scene_data;
@@ -296,12 +311,6 @@ int main() {
                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Scene),
                               &graphics_in_bufs[i]);
-
-                // Aaaaand debug pass input
-                buffer_create(base.phys_dev, base.device,
-                              VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Debug),
-                              &debug_in_bufs[i]);
         }
 
         // This is so we can read data back out
@@ -348,8 +357,7 @@ int main() {
         assert(res == VK_SUCCESS);
 
         // Now make the sets
-        struct DescriptorInfo compute_descs[] = {compute_in_desc, compute_out_desc,
-                                                 debug_in_desc};
+        struct DescriptorInfo compute_descs[] = {compute_in_desc, compute_out_desc, debug_in_desc};
         struct SetInfo compute_set_info = {0};
         compute_set_info.desc_ct = sizeof(compute_descs) / sizeof(compute_descs[0]);
         compute_set_info.descs = compute_descs;
@@ -382,7 +390,7 @@ int main() {
                 compute_buffers[0].buffer.range = VK_WHOLE_SIZE;
                 compute_buffers[1].buffer.buffer = compute_out_bufs[i].handle;
                 compute_buffers[1].buffer.range = VK_WHOLE_SIZE;
-                compute_buffers[2].buffer.buffer = debug_in_bufs[i].handle;
+                compute_buffers[2].buffer.buffer = debug_in_buf.handle;
                 compute_buffers[2].buffer.range = sizeof(struct Debug);
                 assert(sizeof(compute_buffers) / sizeof(compute_buffers[0]) ==
                        compute_set_info.desc_ct);
@@ -401,7 +409,7 @@ int main() {
 
                 // Set for debug
                 union SetHandle debug_buffers[1] = {0};
-                debug_buffers[0].buffer.buffer = debug_in_bufs[i].handle;
+                debug_buffers[0].buffer.buffer = debug_in_buf.handle;
                 debug_buffers[0].buffer.range = VK_WHOLE_SIZE;
                 assert(sizeof(debug_buffers) / sizeof(debug_buffers[0]) == debug_set_info.desc_ct);
                 set_create(base.device, dpool, debug_set_layout, &debug_set_info, debug_buffers,
@@ -737,6 +745,12 @@ int main() {
                 // Also reset compute buffer's output
                 buffer_copy(base.queue, copy_cbuf, compute_out_staging.handle,
                             compute_out_bufs[frame_idx].handle, sizeof(struct ComputeOut));
+                // And debug buffer's input, which compute outputs to. But only every once in a
+                // while, otherwise the arrows don't appear because the framerate is so high.
+                if (frame_ct % 16 == 0) {
+			buffer_copy(base.queue, copy_cbuf, debug_in_staging.handle,
+				    debug_in_buf.handle, sizeof(struct Debug));
+                }
 
                 // Record compute dispatch
                 vkResetCommandBuffer(compute_cbuf, 0);
@@ -789,11 +803,11 @@ int main() {
                 struct timespec start_time = timer_start();
 
                 // Apply impulse
-		/*
+                /*
                 printf("Total linear impulse: %5.2f %5.2f %5.2f\n",
                        compute_out_mapped->linear_impulse[0], compute_out_mapped->linear_impulse[1],
                        compute_out_mapped->linear_impulse[2]);
-		*/
+                */
                 float mass = 1;
                 uint32_t col_count = compute_out_mapped->collision_count;
                 if (col_count > 0) {
@@ -848,10 +862,6 @@ int main() {
                 // Copy new scene data to graphics input
                 buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
                             graphics_in_bufs[frame_idx].handle, sizeof(struct Scene));
-
-                // Debug the debug buffer...
-                //buffer_copy(base.queue, copy_cbuf, debug_staging.handle,
-		//debug_in_bufs[frame_idx].handle, sizeof(struct Debug));
 
                 // Record graphics commands
                 vkResetCommandBuffer(graphics_cbuf, 0);
@@ -1013,11 +1023,12 @@ int main() {
         buffer_destroy(base.device, &scene_staging);
         buffer_destroy(base.device, &compute_buf_reader);
         buffer_destroy(base.device, &compute_out_staging);
+        buffer_destroy(base.device, &debug_in_staging);
+	buffer_destroy(base.device, &debug_in_buf);
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 buffer_destroy(base.device, &compute_in_bufs[i]);
                 buffer_destroy(base.device, &compute_out_bufs[i]);
                 buffer_destroy(base.device, &graphics_in_bufs[i]);
-                buffer_destroy(base.device, &debug_in_bufs[i]);
         }
 
         base_destroy(&base);
