@@ -147,9 +147,9 @@ void get_init_data(struct Scene *data) {
         // Cube 1
         data->objects[0].type[0] = 5;
         data->objects[0].pos[1] = 4;
-	glm_mat4_identity(data->objects[0].orientation);
-	data->objects[0].angular_vel[2] = 0.005;
-	data->objects[0].angular_vel[1] = 0.005;
+        glm_mat4_identity(data->objects[0].orientation);
+        data->objects[0].angular_vel[2] = 0.005;
+        data->objects[0].angular_vel[1] = 0.005;
         object_make_transform(&data->objects[0]);
 
         // Cube 2
@@ -192,6 +192,51 @@ void reorthogonalize(mat4 m, mat4 out) {
         out[1][2] = z_norm[1];
         out[2][2] = z_norm[2];
         out[3][3] = 1;
+}
+
+// Call every time window is resized. Recreates everything, including depth pass and framebuffers
+// and such.
+void recreate_images(struct Base *base, VkRenderPass rpass, struct Swapchain *swapchain,
+                     struct SyncSet sync_sets[CONCURRENT_FRAMES], struct Image* depth_image,
+                     VkFramebuffer framebuffers[CONCURRENT_FRAMES],
+                     VkFence image_fences[CONCURRENT_FRAMES]) {
+        vkDeviceWaitIdle(base->device);
+
+        VkFormat old_format = swapchain->format;
+        uint32_t old_image_ct = swapchain->image_ct;
+
+        swapchain_destroy(base->device, swapchain);
+        swapchain_create(base->surface, base->phys_dev, base->device, old_format,
+                         SC_PRESENT_MODE_PREF, swapchain);
+
+        assert(swapchain->format == old_format && swapchain->image_ct == old_image_ct);
+
+        for (int i = 0; i < CONCURRENT_FRAMES; i++) {
+                sync_set_destroy(base->device, &sync_sets[i]);
+                sync_set_create(base->device, &sync_sets[i]);
+        }
+
+        // Recreate depth
+        // Only destroy if it actually exists (it's initialized to all NULL)
+        if (depth_image->handle != NULL) {
+                image_destroy(base->device, depth_image);
+        }
+        // Now actually recreate it
+        image_create_depth(base->phys_dev, base->device, DEPTH_FORMAT, swapchain->width,
+                           swapchain->height, VK_SAMPLE_COUNT_1_BIT, depth_image);
+
+        // Recreate framebuffers
+        for (int i = 0; i < swapchain->image_ct; i++) {
+                if (framebuffers[i] != NULL) {
+                        vkDestroyFramebuffer(base->device, framebuffers[i], NULL);
+                }
+
+                VkImageView views[] = {swapchain->views[i], depth_image->view};
+                framebuffer_create(base->device, rpass, swapchain->width, swapchain->height,
+                                   sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
+
+                image_fences[i] = VK_NULL_HANDLE;
+        }
 }
 
 int main() {
@@ -281,10 +326,9 @@ int main() {
 
         // Buffer for debug pass
         struct Buffer debug_in_buf;
-	buffer_create(base.phys_dev, base.device,
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Debug),
-			&debug_in_buf);
+        buffer_create(base.phys_dev, base.device,
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Debug), &debug_in_buf);
 
         // Initialize scene staging
         struct Scene *scene_data;
@@ -562,46 +606,8 @@ int main() {
         while (!glfwWindowShouldClose(window)) {
                 while (must_recreate) {
                         must_recreate = 0;
-                        vkDeviceWaitIdle(base.device);
-
-                        VkFormat old_format = swapchain.format;
-                        uint32_t old_image_ct = swapchain.image_ct;
-
-                        swapchain_destroy(base.device, &swapchain);
-                        swapchain_create(base.surface, base.phys_dev, base.device, old_format,
-                                         SC_PRESENT_MODE_PREF, &swapchain);
-
-                        assert(swapchain.format == old_format &&
-                               swapchain.image_ct == old_image_ct);
-
-                        for (int i = 0; i < CONCURRENT_FRAMES; i++) {
-                                sync_set_destroy(base.device, &sync_sets[i]);
-                                sync_set_create(base.device, &sync_sets[i]);
-                        }
-
-                        // Recreate depth
-                        // Only destroy if it actually exists (it's initialized to all NULL)
-                        if (depth_image.handle != NULL) {
-                                image_destroy(base.device, &depth_image);
-                        }
-                        // Now actually recreate it
-                        image_create_depth(base.phys_dev, base.device, DEPTH_FORMAT,
-                                           swapchain.width, swapchain.height, VK_SAMPLE_COUNT_1_BIT,
-                                           &depth_image);
-
-                        // Recreate framebuffers
-                        for (int i = 0; i < swapchain.image_ct; i++) {
-                                if (framebuffers[i] != NULL) {
-                                        vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
-                                }
-
-                                VkImageView views[] = {swapchain.views[i], depth_image.view};
-                                framebuffer_create(
-                                        base.device, rpass, swapchain.width, swapchain.height,
-                                        sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
-
-                                image_fences[i] = VK_NULL_HANDLE;
-                        }
+                        recreate_images(&base, rpass, &swapchain, sync_sets, &depth_image,
+                                        framebuffers, image_fences);
 
                         int real_width, real_height;
                         glfwGetFramebufferSize(window, &real_width, &real_height);
@@ -753,8 +759,8 @@ int main() {
                 // And debug buffer's input, which compute outputs to. But only every once in a
                 // while, otherwise the arrows don't appear because the framerate is so high.
                 if (frame_ct % 16 == 0) {
-			buffer_copy(base.queue, copy_cbuf, debug_in_staging.handle,
-				    debug_in_buf.handle, sizeof(struct Debug));
+                        buffer_copy(base.queue, copy_cbuf, debug_in_staging.handle,
+                                    debug_in_buf.handle, sizeof(struct Debug));
                 }
 
                 // Record compute dispatch
@@ -814,6 +820,7 @@ int main() {
                        compute_out_mapped->linear_impulse[2]);
                 */
                 uint32_t col_count = compute_out_mapped->collision_count;
+                printf("col count: %u\n", col_count);
                 if (col_count > 0) {
                         scene_data->objects[0].linear_vel[0] +=
                                 compute_out_mapped->linear_impulse[0] / col_count;
@@ -1033,7 +1040,7 @@ int main() {
         buffer_destroy(base.device, &compute_buf_reader);
         buffer_destroy(base.device, &compute_out_staging);
         buffer_destroy(base.device, &debug_in_staging);
-	buffer_destroy(base.device, &debug_in_buf);
+        buffer_destroy(base.device, &debug_in_buf);
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 buffer_destroy(base.device, &compute_in_bufs[i]);
                 buffer_destroy(base.device, &compute_out_bufs[i]);
