@@ -142,9 +142,10 @@ void get_init_data(struct Scene *data) {
         bzero(data, sizeof(struct Scene));
         data->count[0] = 2;
         // Cube 1
-        data->objects[0].type[0] = 5;
+        data->objects[0].type[0] = 1;
         data->objects[0].pos[1] = 4;
-        glm_mat4_identity(data->objects[0].orientation);
+	glm_mat4_identity(data->objects[0].orientation);
+	data->objects[0].angular_vel[2] = 0.005;
         object_make_transform(&data->objects[0]);
 
         // Cube 2
@@ -824,24 +825,22 @@ int main() {
                 scene_data->objects[0].pos[1] += scene_data->objects[0].linear_vel[1];
                 scene_data->objects[0].pos[2] += scene_data->objects[0].linear_vel[2];
 
-                /*
                 // Apply angular velocity
                 vec3 omega;
-                memcpy(omega, velocities.angular[0], sizeof(vec3));
+                memcpy(omega, scene_data->objects[0].angular_vel, sizeof(vec3));
                 mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
                                     {omega[2], 0, -omega[0], 0},
                                     {-omega[1], omega[0], 0, 0},
                                     {0, 0, 0, 1}};
 
                 mat4 derivative;
-                glm_mat4_mul(omega_tilde, scene_data->objects[1].transform, derivative);
+                glm_mat4_mul(omega_tilde, scene_data->objects[0].transform, derivative);
 
                 for (int i = 0; i < 3; i++) {
                         for (int j = 0; j < 3; j++) {
-                                velocities.orientation[i][j] -= derivative[i][j];
+                                scene_data->objects[0].orientation[i][j] -= derivative[i][j];
                         }
                 }
-                */
 
                 reorthogonalize(scene_data->objects[0].orientation,
                                 scene_data->objects[0].orientation);
