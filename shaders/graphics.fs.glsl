@@ -46,10 +46,10 @@ layout (location = 1) in vec3 pos_worldspace;
 layout (location = 0) out vec4 out_color;
 
 RayShot raymarch(vec3 ray_origin, vec3 ray_dir, float initial_depth) {
-	float threshold = 0.001;
 	float depth = initial_depth;
 	float closest = 99999999;
-	for (int i = 0; i < 64; i++) {
+	for (int i = 0; i < 128; i++) {
+		float threshold = depth / constants.iResolution.x;
 		vec3 point = ray_origin + ray_dir * depth;
 		float dist = scene_sdf(scene.objects[obj_idx].type,
 				       scene.objects[obj_idx].transform, point);
