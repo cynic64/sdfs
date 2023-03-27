@@ -197,7 +197,7 @@ void reorthogonalize(mat4 m, mat4 out) {
 // Call every time window is resized. Recreates everything, including depth pass and framebuffers
 // and such.
 void recreate_images(struct Base *base, VkRenderPass rpass, struct Swapchain *swapchain,
-                     struct SyncSet sync_sets[CONCURRENT_FRAMES], struct Image* depth_image,
+                     struct SyncSet sync_sets[CONCURRENT_FRAMES], struct Image *depth_image,
                      VkFramebuffer framebuffers[CONCURRENT_FRAMES],
                      VkFence image_fences[CONCURRENT_FRAMES]) {
         vkDeviceWaitIdle(base->device);
@@ -237,6 +237,89 @@ void recreate_images(struct Base *base, VkRenderPass rpass, struct Swapchain *sw
 
                 image_fences[i] = VK_NULL_HANDLE;
         }
+}
+
+// Will update last_mouse_{x,y}, camera position, last frame time
+void handle_input(GLFWwindow *window, double *last_mouse_x, double *last_mouse_y,
+                  struct timespec *last_frame_time, struct CameraFly *camera,
+                  struct Scene *scene_data) {
+        // Mouse movement
+        vec3 cam_movement = {0.0F, 0.0F, 0.0F};
+        double new_mouse_x, new_mouse_y;
+        glfwGetCursorPos(window, &new_mouse_x, &new_mouse_y);
+        double d_mouse_x = new_mouse_x - *last_mouse_x, d_mouse_y = new_mouse_y - *last_mouse_y;
+        double delta = timer_get_elapsed(last_frame_time);
+        *last_mouse_x = new_mouse_x;
+        *last_mouse_y = new_mouse_y;
+
+        // Camera keys
+        float speed_multiplier = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS ? 20 : 1;
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+                cam_movement[2] += MOVEMENT_SPEED * speed_multiplier;
+        }
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+                cam_movement[2] -= MOVEMENT_SPEED * speed_multiplier;
+        }
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+                cam_movement[0] -= MOVEMENT_SPEED * speed_multiplier;
+        }
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+                cam_movement[0] += MOVEMENT_SPEED * speed_multiplier;
+        }
+
+        if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
+                // Keys to rotate cube
+                if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
+                        glm_rotate(scene_data->objects[0].orientation, speed_multiplier * 0.001,
+                                   (vec3){1, 0, 0});
+                }
+                if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
+                        glm_rotate(scene_data->objects[0].orientation, -speed_multiplier * 0.001,
+                                   (vec3){1, 0, 0});
+                }
+                if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
+                        glm_rotate(scene_data->objects[0].orientation, speed_multiplier * 0.001,
+                                   (vec3){0, 0, 1});
+                }
+                if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
+                        glm_rotate(scene_data->objects[0].orientation, -speed_multiplier * 0.001,
+                                   (vec3){0, 0, 1});
+                }
+                if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
+                        glm_rotate(scene_data->objects[0].orientation, speed_multiplier * 0.001,
+                                   (vec3){0, 1, 0});
+                }
+                if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
+                        glm_rotate(scene_data->objects[0].orientation, -speed_multiplier * 0.001,
+                                   (vec3){0, 1, 0});
+                }
+        } else {
+                // Keys to move cube around
+                if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
+                        scene_data->objects[0].pos[2] += MOVEMENT_SPEED * speed_multiplier * 0.1;
+                }
+                if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
+                        scene_data->objects[0].pos[2] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
+                }
+                if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
+                        scene_data->objects[0].pos[0] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
+                }
+                if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
+                        scene_data->objects[0].pos[0] += MOVEMENT_SPEED * speed_multiplier * 0.1;
+                }
+                if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
+                        scene_data->objects[0].pos[1] += MOVEMENT_SPEED * speed_multiplier * 0.1;
+                }
+                if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
+                        scene_data->objects[0].pos[1] -= MOVEMENT_SPEED * speed_multiplier * 0.1;
+                }
+        }
+
+        // Update camera
+        camera_fly_update(camera, d_mouse_x * MOUSE_SENSITIVITY_FACTOR,
+                          d_mouse_y * MOUSE_SENSITIVITY_FACTOR, cam_movement, delta);
+
+        *last_frame_time = timer_start();
 }
 
 int main() {
@@ -617,89 +700,8 @@ int main() {
                 }
 
                 // Handle input
-                // Mouse movement
-                double new_mouse_x, new_mouse_y;
-                glfwGetCursorPos(window, &new_mouse_x, &new_mouse_y);
-                double d_mouse_x = new_mouse_x - last_mouse_x,
-                       d_mouse_y = new_mouse_y - last_mouse_y;
-                double delta = timer_get_elapsed(&last_frame_time);
-                last_frame_time = timer_start(last_frame_time);
-                last_mouse_x = new_mouse_x;
-                last_mouse_y = new_mouse_y;
-
-                // Camera keys
-                vec3 cam_movement = {0.0F, 0.0F, 0.0F};
-                float speed_multiplier = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS ? 20 : 1;
-                if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-                        cam_movement[2] += MOVEMENT_SPEED * speed_multiplier;
-                }
-                if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-                        cam_movement[2] -= MOVEMENT_SPEED * speed_multiplier;
-                }
-                if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-                        cam_movement[0] -= MOVEMENT_SPEED * speed_multiplier;
-                }
-                if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-                        cam_movement[0] += MOVEMENT_SPEED * speed_multiplier;
-                }
-
-                if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS) {
-                        // Keys to rotate cube
-                        if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].orientation,
-                                           speed_multiplier * 0.001, (vec3){1, 0, 0});
-                        }
-                        if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].orientation,
-                                           -speed_multiplier * 0.001, (vec3){1, 0, 0});
-                        }
-                        if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].orientation,
-                                           speed_multiplier * 0.001, (vec3){0, 0, 1});
-                        }
-                        if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].orientation,
-                                           -speed_multiplier * 0.001, (vec3){0, 0, 1});
-                        }
-                        if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].orientation,
-                                           speed_multiplier * 0.001, (vec3){0, 1, 0});
-                        }
-                        if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
-                                glm_rotate(scene_data->objects[0].orientation,
-                                           -speed_multiplier * 0.001, (vec3){0, 1, 0});
-                        }
-                } else {
-                        // Keys to move cube around
-                        if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
-                                scene_data->objects[0].pos[2] +=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
-                        }
-                        if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
-                                scene_data->objects[0].pos[2] -=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
-                        }
-                        if (glfwGetKey(window, GLFW_KEY_H) == GLFW_PRESS) {
-                                scene_data->objects[0].pos[0] -=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
-                        }
-                        if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
-                                scene_data->objects[0].pos[0] +=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
-                        }
-                        if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-                                scene_data->objects[0].pos[1] +=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
-                        }
-                        if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
-                                scene_data->objects[0].pos[1] -=
-                                        MOVEMENT_SPEED * speed_multiplier * 0.1;
-                        }
-                }
-
-                // Update camera
-                camera_fly_update(&camera, d_mouse_x * MOUSE_SENSITIVITY_FACTOR,
-                                  d_mouse_y * MOUSE_SENSITIVITY_FACTOR, cam_movement, delta);
+                handle_input(window, &last_mouse_x, &last_mouse_y, &last_frame_time, &camera,
+                             scene_data);
 
                 // Set up frame
                 int frame_idx = frame_ct % CONCURRENT_FRAMES;
@@ -910,8 +912,8 @@ int main() {
                 struct PushConstants pushc_data;
                 pushc_data.iResolution[0] = swapchain.width;
                 pushc_data.iResolution[1] = swapchain.height;
-                pushc_data.iMouse[0] = new_mouse_x;
-                pushc_data.iMouse[1] = new_mouse_y;
+                pushc_data.iMouse[0] = last_mouse_x;
+                pushc_data.iMouse[1] = last_mouse_y;
                 pushc_data.iMouse[2] =
                         glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
                 pushc_data.iFrame = frame_ct;
