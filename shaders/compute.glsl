@@ -54,8 +54,9 @@ void main() {
 	float dist1 = scene_sdf(b_type, b_transform, point);
 
 	if (dist0 <= 0 && dist1 <= 0) {
-		vec3 my_normal = calc_normal(a_type, a_transform, point);
-		vec3 other_normal = calc_normal(b_type, b_transform, point);
+		float normal_detail = 0.0002;
+		vec3 my_normal = calc_normal(a_type, a_transform, point, normal_detail);
+		vec3 other_normal = calc_normal(b_type, b_transform, point, normal_detail);
 
 		// If there's a collision, write the average of (the opposite of our normal) and
 		// (the other normal). Those should both point roughly in the right direction to
@@ -83,7 +84,7 @@ void main() {
 		//vec3 torque = cross(r, force);
 
 		// 1 = perfectly elastic, 0 = all momentum absorbed on collision
-		float restitution = 1;
+		float restitution = 0.9;
 		// Eventually these should be passed as part of Object
 		float a_mass = 1;
 		// Object B can't be moved, so it has infinite mass
@@ -110,7 +111,7 @@ void main() {
 		vec3 n = collision_normal;
 		float impulse =
 			// How much relative velocity there is along the collision normal: the
-			// relative velocity might be high, but it it's at a grazing angle, the
+			// relative velocity might be high, but if it's at a grazing angle, the
 			// impulse should be scaled down. This is what the dot product accomplishes.
 			dot(-(1 + restitution) * rel_vel, n)
 			/
@@ -177,11 +178,13 @@ void main() {
 		// All the atomic adds seem like they should be really slow, but somehow aren't.
 		atomicAdd(out_buf.collision_count, 1);
 
+		/*
 		// Add a line to debug view, as long as there is space
 		uint idx = atomicAdd(out_buf.debug_out_idx, 1);
 		if (idx < DEBUG_MAX_LINES) {
 			debug_buf.line_poss[idx] = point;
 			debug_buf.line_dirs[idx] = vec3(collision_normal);
 		}
+		*/
 	}
 }

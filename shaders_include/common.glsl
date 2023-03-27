@@ -17,17 +17,20 @@ float sd_cross(vec3 point) {
 
 // From http://blog.hvidtfeldts.net/index.php/2011/09/distance-estimated-3d-fractals-v-the-mandelbulb-different-de-approximations/
 float sd_mandelbulb(vec3 pos) {
+	// It doesn't quite fit in a 2x2 bounding box otherwise
+	pos *= 1.2;
+
 	vec3 z = pos;
 	float dr = 1.0;
 	float r = 0.0;
-	for (int i = 0; i < 32; i++) {
+	for (int i = 0; i < 8; i++) {
 		r = length(z);
 		if (r>2) break;
 		
 		// convert to polar coordinates
 		float theta = acos(z.z/r);
 		float phi = atan(z.y,z.x);
-		dr =  pow( r, 8-1.0)*8*dr + 1.0;
+		dr =  pow( r, 8-1)*8*dr + 1.0;
 		
 		// scale and rotate the point
 		float zr = pow( r,8);
@@ -139,9 +142,12 @@ float scene_sdf(int type, mat4 transform, vec3 point) {
 }
 
 // Taken from iquilezles.org/articles/normalsSDF/
+//
 // Messing with this is bad juju
-vec3 calc_normal(int type, mat4 transform, vec3 point) {
-    const float h = 0.00002;
+//
+// h is the distance used to approximate the derivatives. Lower will resolve more detail, but may
+// also produce a lot of noise.
+vec3 calc_normal(int type, mat4 transform, vec3 point, float h) {
     const vec2 k = vec2(1,-1);
     vec3 n = k.xyy*scene_sdf(type, transform, point + k.xyy*h)
 		     + k.yyx*scene_sdf(type, transform, point + k.yyx*h)

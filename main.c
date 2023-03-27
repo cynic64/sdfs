@@ -145,7 +145,7 @@ void get_init_data(struct Scene *data) {
         bzero(data, sizeof(struct Scene));
         data->count[0] = 2;
         // Cube 1
-        data->objects[0].type[0] = 1;
+        data->objects[0].type[0] = 5;
         data->objects[0].pos[1] = 4;
 	glm_mat4_identity(data->objects[0].orientation);
 	data->objects[0].angular_vel[2] = 0.005;

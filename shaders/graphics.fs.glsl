@@ -7,9 +7,9 @@ layout (push_constant, std140) uniform PushConstants {
        vec4 iMouse;
        float iFrame;
        float iTime;
-       vec4 forward;
-       vec4 eye;
-       vec4 dir;
+       vec3 forward;
+       vec3 eye;
+       vec3 dir;
        mat4 view;
        mat4 proj;
 } constants;
@@ -32,7 +32,8 @@ layout(std140, binding = 0) buffer Scene {
 #include common.glsl
 
 struct RayShot {
-	vec3 closest;
+	vec3 intersect;
+	float closest;
 	bool hit;
 	float depth;
 	int steps;
@@ -47,16 +48,19 @@ layout (location = 0) out vec4 out_color;
 RayShot raymarch(vec3 ray_origin, vec3 ray_dir, float initial_depth) {
 	float threshold = 0.001;
 	float depth = initial_depth;
-	for (int i = 0; i < 128; i++) {
+	float closest = 99999999;
+	for (int i = 0; i < 64; i++) {
 		vec3 point = ray_origin + ray_dir * depth;
 		float dist = scene_sdf(scene.objects[obj_idx].type,
 				       scene.objects[obj_idx].transform, point);
+		closest = min(closest, dist);
 		if (dist < threshold) {
 			RayShot shot;
-			shot.closest = point;
+			shot.intersect = point;
 			shot.depth = depth;
 			shot.hit = true;
 			shot.steps = i;
+			shot.closest = closest;
 			return shot;
 		}
 		depth += dist;
@@ -65,7 +69,8 @@ RayShot raymarch(vec3 ray_origin, vec3 ray_dir, float initial_depth) {
 	RayShot shot;
 	shot.hit = false;
 	shot.depth = 999999999;
-	shot.steps = 128;
+	shot.steps = 64;
+	shot.closest = closest;
 	return shot;
 }
 
@@ -79,10 +84,13 @@ void main()
 	if (shot.hit) {
 		out_color = vec4((calc_normal(scene.objects[obj_idx].type,
 					      scene.objects[obj_idx].transform,
-					      shot.closest) * 0.5 + 0.5), 1);
+					      shot.intersect,
+					      shot.depth / constants.iResolution.x)
+				  * 0.5 + 0.5), 1);
 		gl_FragDepth = clamp(shot.depth / 100, 0, 1);
-	} else {
+	}  else {
 		out_color = vec4(vec3(scene.objects[obj_idx].type * 0.2) + 0.1, 1);
-		gl_FragDepth = 0.9;
+		// Use 0.9 if you want to see bounding boxes
+		gl_FragDepth = 1;
 	}
 }
