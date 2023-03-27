@@ -1,5 +1,4 @@
 #version 450
-#extension GL_KHR_shader_subgroup_arithmetic : enable
 #extension GL_EXT_shader_atomic_float : enable
 
 #include constants.glsl
@@ -23,6 +22,7 @@ layout (std140, binding = 1) buffer ComputeOut {
 	vec3 force;
 	vec3 torque;
 	vec3 linear_impulse;
+	vec3 angular_impulse;
 	uint collision_count;
 
 	// Idk where else to put this. Surely there is a better way to set some value to 0 before
@@ -69,11 +69,13 @@ void main() {
 		if (length(collision_normal) == 0) return;
 		collision_normal = normalize(collision_normal);
 
-		// Object's center of mass
-		vec3 com = (a_transform * vec4(0, 0, 0, 1)).xyz;
+		// Objects' center of mass
+		vec3 a_com = (a_transform * vec4(0, 0, 0, 1)).xyz;
+		vec3 b_com = (b_transform * vec4(0, 0, 0, 1)).xyz;
 
 		// Vector from COM to point
-		vec3 r = point - com;
+		vec3 a_from_com = point - a_com;
+		vec3 b_from_com = point - b_com;
 
 		// Cross of force and vector to COM, which is the force's contribution to torque or
 		// something
@@ -86,15 +88,93 @@ void main() {
 		float a_mass = 1;
 		// Object B can't be moved, so it has infinite mass
 		float b_mass = 1 / 0;
-		vec3 rel_vel = in_buf.objects[0].linear_vel - in_buf.objects[1].linear_vel;
-		float impulse_mag = (-(1 + restitution) * dot(rel_vel, collision_normal))
-			/ (dot(collision_normal, collision_normal) * (1.0 / a_mass + 1.0 / b_mass));
-		vec3 linear_impulse = impulse_mag * collision_normal;
+		// Eventually I will calculate these properly
+		mat3 a_inertia_inverse = mat3(1, 0, 0,
+					      0, 1, 0,
+					      0, 0, 1);
+		mat3 b_inertia_inverse = mat3(0, 0, 0,
+					      0, 0, 0,
+					      0, 0, 0);
 
-		// This seems like it should be really slow, but somehow it isn't.
+		// The cross product to find angular velocity's effect in world-space should make
+		// sense: The more perpendicular `x_from_com` is to the axis of rotation, the more
+		// angular velocity will contribute.
+		vec3 a_vel = in_buf.objects[0].linear_vel
+			+ cross(in_buf.objects[0].angular_vel, a_from_com);
+		vec3 b_vel = in_buf.objects[1].linear_vel
+			+ cross(in_buf.objects[1].angular_vel, b_from_com);
+		vec3 rel_vel = a_vel - b_vel;
+
+		// Taken from https://www.chrishecker.com/images/b/bb/Gdmphys4.pdf, what an ungodly
+		// formula
+		vec3 n = collision_normal;
+		float impulse =
+			// How much relative velocity there is along the collision normal: the
+			// relative velocity might be high, but it it's at a grazing angle, the
+			// impulse should be scaled down. This is what the dot product accomplishes.
+			dot(-(1 + restitution) * rel_vel, n)
+			/
+			(
+			 // Since we normalize `n`, I don't think all the dot products are
+			 // necessary, but whatever. Dividing by the inverse of mass should make
+			 // sense: If either thing is super heavy, the impulse will be
+			 // greater. Though dividing by mass would usually make the impulse smaller,
+			 // we're in the denominator so this has the effect we want.
+			 dot(n, n) * (1.0 / a_mass + 1.0 / b_mass)
+			 // If we weren't bothering with angular effects, we would be done. But we
+			 // do care about angular stuff, so here we go:
+			 +
+			 dot
+			 (
+			  // I still have no idea what the fuck an inertia tensor is, but the rest
+			  // kind of makes sense. The inner cross product (a_from_com x n) tells us
+			  // around what axis this impulse will try to spin us around (If I whack
+			  // you on an ice rink, you will start spinning around an axis
+			  // perpendicular both to the vector I whacked you along (n) and the vector
+			  // going from where I whacked you to your center of mass (a_from_com)).
+			  //
+			  // Then I guess the inertia tensor inverse accounts for it being harder to
+			  // spin around some axes than others. It's a lot easier to spin a pencil
+			  // between your fingers than when it's lying on a table, for example.
+			  //
+			  // Not sure what the outer cross product accomplishes. I think the
+			  // resulting vector will face in direction -n.
+			  cross(a_inertia_inverse * cross(a_from_com, n), a_from_com)
+			  +
+			  // Now we do the same for B
+			  cross(b_inertia_inverse * cross(b_from_com, n), b_from_com)
+			  // And now we dot the whole thing with n, I dunno why...
+			  , n
+			  )
+			 );
+		// Phew...
+
+		// Maybe impulse is the wrong name for this, since impulse is scalar. But I need to
+		// be able to sum the individual effects impulse has on velocity. The formula for
+		// updating velocity from impulse looks like this:
+		//
+		// new_v = old_v + (impulse / mass) * collision_normal
+		//
+		// To avoid having having to store all collision normals, we do the multiplication
+		// here so we can sum it into a single vec3.
+		vec3 linear_impulse = (impulse / a_mass) * collision_normal;
 		atomicAdd(out_buf.linear_impulse.x, linear_impulse.x);
 		atomicAdd(out_buf.linear_impulse.y, linear_impulse.y);
 		atomicAdd(out_buf.linear_impulse.z, linear_impulse.z);
+
+		// Same thing here:
+		//
+		// new_omega = old_omega + a_inertia_inverse * cross(a_from_com, collision_normal * j)
+		//
+		// Or something like that, it's not Chris' article so I guessed. Mass doesn't matter
+		// because it's encoded in the inertia tensor.
+		vec3 angular_impulse = a_inertia_inverse
+			* cross(a_from_com, collision_normal * impulse);
+		atomicAdd(out_buf.angular_impulse.x, angular_impulse.x);
+		atomicAdd(out_buf.angular_impulse.y, angular_impulse.y);
+		atomicAdd(out_buf.angular_impulse.z, angular_impulse.z);
+
+		// All the atomic adds seem like they should be really slow, but somehow aren't.
 		atomicAdd(out_buf.collision_count, 1);
 
 		// Add a line to debug view, as long as there is space

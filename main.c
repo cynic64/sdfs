@@ -88,7 +88,10 @@ struct __attribute__((packed, aligned(16))) ComputeOut {
         vec4 torque; // vec3
 
         // Instantaneous change in velocity
-        vec3 linear_impulse;
+        vec4 linear_impulse; // vec3
+
+        // Instantaneous change in angular velocity
+        vec3 angular_impulse;
 
         uint32_t collision_count;
         uint32_t debug_out_idx;
@@ -146,6 +149,7 @@ void get_init_data(struct Scene *data) {
         data->objects[0].pos[1] = 4;
 	glm_mat4_identity(data->objects[0].orientation);
 	data->objects[0].angular_vel[2] = 0.005;
+	data->objects[0].angular_vel[1] = 0.005;
         object_make_transform(&data->objects[0]);
 
         // Cube 2
@@ -809,15 +813,21 @@ int main() {
                        compute_out_mapped->linear_impulse[0], compute_out_mapped->linear_impulse[1],
                        compute_out_mapped->linear_impulse[2]);
                 */
-                float mass = 1;
                 uint32_t col_count = compute_out_mapped->collision_count;
                 if (col_count > 0) {
                         scene_data->objects[0].linear_vel[0] +=
-                                compute_out_mapped->linear_impulse[0] / mass * 1 / col_count;
+                                compute_out_mapped->linear_impulse[0] / col_count;
                         scene_data->objects[0].linear_vel[1] +=
-                                compute_out_mapped->linear_impulse[1] / mass * 1 / col_count;
+                                compute_out_mapped->linear_impulse[1] / col_count;
                         scene_data->objects[0].linear_vel[2] +=
-                                compute_out_mapped->linear_impulse[2] / mass * 1 / col_count;
+                                compute_out_mapped->linear_impulse[2] / col_count;
+
+                        scene_data->objects[0].angular_vel[0] +=
+                                compute_out_mapped->angular_impulse[0] / col_count;
+                        scene_data->objects[0].angular_vel[1] +=
+                                compute_out_mapped->angular_impulse[1] / col_count;
+                        scene_data->objects[0].angular_vel[2] +=
+                                compute_out_mapped->angular_impulse[2] / col_count;
                 }
 
                 // Integrate velocity to position
