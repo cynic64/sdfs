@@ -113,7 +113,6 @@ struct SyncSet {
         VkSemaphore acquire_sem;
         // Signalled when compute shader finishes. Graphics submission waits on this and
         // acquire_sem.
-        VkSemaphore compute_sem;
         VkSemaphore render_sem;
 };
 
@@ -123,7 +122,6 @@ void sync_set_create(VkDevice device, struct SyncSet *sync_set) {
         // on the compute from previous frame
         fence_create(device, 0, &sync_set->compute_fence);
         semaphore_create(device, &sync_set->acquire_sem);
-        semaphore_create(device, &sync_set->compute_sem);
         semaphore_create(device, &sync_set->render_sem);
 }
 
@@ -131,7 +129,6 @@ void sync_set_destroy(VkDevice device, struct SyncSet *sync_set) {
         vkDestroyFence(device, sync_set->render_fence, NULL);
         vkDestroyFence(device, sync_set->compute_fence, NULL);
         vkDestroySemaphore(device, sync_set->acquire_sem, NULL);
-        vkDestroySemaphore(device, sync_set->compute_sem, NULL);
         vkDestroySemaphore(device, sync_set->render_sem, NULL);
 }
 
@@ -716,33 +713,11 @@ int main() {
                 res = vkWaitForFences(base.device, 1, &sync_set->render_fence, VK_TRUE, UINT64_MAX);
                 assert(res == VK_SUCCESS);
 
-                // Integrate acceleration to velocity
-                vec3 linear_accel = {0, 0, 0};
-                vec3 angular_accel = {0, 0, 0};
-                memcpy(linear_accel, compute_out_mapped->force, sizeof(vec3));
-                memcpy(angular_accel, compute_out_mapped->torque, sizeof(vec3));
-
-                linear_accel[0] *= 0.000001;
-                linear_accel[1] *= 0.000001;
-                linear_accel[2] *= 0.000001;
-
-                angular_accel[0] *= 0.00002;
-                angular_accel[1] *= 0.00002;
-                angular_accel[2] *= 0.00002;
-
-                scene_data->objects[0].linear_vel[0] += linear_accel[0];
-                scene_data->objects[0].linear_vel[1] += linear_accel[1];
-                scene_data->objects[0].linear_vel[2] += linear_accel[2];
-
-                scene_data->objects[0].angular_vel[0] += angular_accel[0];
-                scene_data->objects[0].angular_vel[1] += angular_accel[1];
-                scene_data->objects[0].angular_vel[2] += angular_accel[2];
-
                 // Apply gravity, but only to first object
                 scene_data->objects[0].linear_vel[1] -= 0.0001;
 
-                // Apply world's simplest drag model
                 /*
+                // Apply world's simplest drag model
                 scene_data->objects[0].linear_vel[0] *= 0.99;
                 scene_data->objects[0].linear_vel[1] *= 0.99;
                 scene_data->objects[0].linear_vel[2] *= 0.99;
@@ -752,39 +727,105 @@ int main() {
                 scene_data->objects[0].angular_vel[2] *= 0.99;
                 */
 
-                // Copy latest data to compute shader input
-                buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
-                            compute_in_bufs[frame_idx].handle, sizeof(struct Scene));
-                // Also reset compute buffer's output
-                buffer_copy(base.queue, copy_cbuf, compute_out_staging.handle,
-                            compute_out_bufs[frame_idx].handle, sizeof(struct ComputeOut));
-                // And debug buffer's input, which compute outputs to. But only every once in a
-                // while, otherwise the arrows don't appear because the framerate is so high.
-                if (frame_ct % 16 == 0) {
-                        buffer_copy(base.queue, copy_cbuf, debug_in_staging.handle,
-                                    debug_in_buf.handle, sizeof(struct Debug));
-                }
+                //////// begin physics
 
-                // Record compute dispatch
-                vkResetCommandBuffer(compute_cbuf, 0);
-                cbuf_begin_onetime(compute_cbuf);
-                vkCmdBindPipeline(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipe);
-                vkCmdBindDescriptorSets(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                        compute_pipe_layout, 0, 1, &compute_sets[frame_idx], 0,
-                                        NULL);
-                vkCmdDispatch(compute_cbuf, 20, 20, 20);
-                res = vkEndCommandBuffer(compute_cbuf);
-                assert(res == VK_SUCCESS);
+		// Copy latest data to compute shader input
+		buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
+			    compute_in_bufs[frame_idx].handle, sizeof(struct Scene));
+		// Also reset compute buffer's output
+		buffer_copy(base.queue, copy_cbuf, compute_out_staging.handle,
+			    compute_out_bufs[frame_idx].handle, sizeof(struct ComputeOut));
+		// And debug buffer's input
+		buffer_copy(base.queue, copy_cbuf, debug_in_staging.handle,
+			    debug_in_buf.handle, sizeof(struct Debug));
 
-                VkSubmitInfo compute_submit_info = {0};
-                compute_submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-                compute_submit_info.commandBufferCount = 1;
-                compute_submit_info.pCommandBuffers = &compute_cbuf;
-                compute_submit_info.signalSemaphoreCount = 1;
-                compute_submit_info.pSignalSemaphores = &sync_set->compute_sem;
+		// Record compute dispatch
+		vkResetCommandBuffer(compute_cbuf, 0);
+		cbuf_begin_onetime(compute_cbuf);
+		vkCmdBindPipeline(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
+				    compute_pipe);
+		vkCmdBindDescriptorSets(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
+					compute_pipe_layout, 0, 1, &compute_sets[frame_idx],
+					0, NULL);
+		vkCmdDispatch(compute_cbuf, 20, 20, 20);
+		res = vkEndCommandBuffer(compute_cbuf);
+		assert(res == VK_SUCCESS);
 
-                res = vkQueueSubmit(base.queue, 1, &compute_submit_info, sync_set->compute_fence);
-                assert(res == VK_SUCCESS);
+		VkSubmitInfo compute_submit_info = {0};
+		compute_submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		compute_submit_info.commandBufferCount = 1;
+		compute_submit_info.pCommandBuffers = &compute_cbuf;
+
+		res = vkQueueSubmit(base.queue, 1, &compute_submit_info,
+				    sync_set->compute_fence);
+		assert(res == VK_SUCCESS);
+
+		// Wait for compute to finish. There must be a more efficient way,
+		// integrating velocity on the GPU would help a lot already.
+		res = vkWaitForFences(base.device, 1, &sync_set->compute_fence, VK_TRUE,
+					UINT64_MAX);
+		assert(res == VK_SUCCESS);
+		res = vkResetFences(base.device, 1, &sync_set->compute_fence);
+		assert(res == VK_SUCCESS);
+
+		// Copy what the compute shader outputted to a CPU-visible buffer
+		buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
+			    compute_buf_reader.handle, sizeof(struct ComputeOut));
+
+		// Update object positions and debug input
+
+		// Apply impulse
+		int col_count = compute_out_mapped->collision_count;
+		printf("col count: %u\n", col_count);
+		if (col_count > 0) {
+			col_count = 1;
+			scene_data->objects[0].linear_vel[0] +=
+				compute_out_mapped->linear_impulse[0] / col_count;
+			scene_data->objects[0].linear_vel[1] +=
+				compute_out_mapped->linear_impulse[1] / col_count;
+			scene_data->objects[0].linear_vel[2] +=
+				compute_out_mapped->linear_impulse[2] / col_count;
+
+			scene_data->objects[0].angular_vel[0] +=
+				compute_out_mapped->angular_impulse[0] / col_count;
+			scene_data->objects[0].angular_vel[1] +=
+				compute_out_mapped->angular_impulse[1] / col_count;
+			scene_data->objects[0].angular_vel[2] +=
+				compute_out_mapped->angular_impulse[2] / col_count;
+		}
+
+		// Integrate velocity to position
+		scene_data->objects[0].pos[0] += scene_data->objects[0].linear_vel[0];
+		scene_data->objects[0].pos[1] += scene_data->objects[0].linear_vel[1];
+		scene_data->objects[0].pos[2] += scene_data->objects[0].linear_vel[2];
+
+		// Apply angular velocity
+		vec3 omega;
+		memcpy(omega, scene_data->objects[0].angular_vel, sizeof(vec3));
+		mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
+				    {omega[2], 0, -omega[0], 0},
+				    {-omega[1], omega[0], 0, 0},
+				    {0, 0, 0, 1}};
+
+		mat4 derivative;
+		glm_mat4_mul(omega_tilde, scene_data->objects[0].transform, derivative);
+
+		for (int i = 0; i < 3; i++) {
+			for (int j = 0; j < 3; j++) {
+				scene_data->objects[0].orientation[i][j] -=
+					derivative[i][j];
+			}
+		}
+
+		reorthogonalize(scene_data->objects[0].orientation,
+				scene_data->objects[0].orientation);
+
+		// Generate all transform matrices from position and orientation
+		for (int i = 0; i < scene_data->count[0]; i++) {
+			object_make_transform(&scene_data->objects[0]);
+		}
+
+                //////// end physics
 
                 // Acquire an image
                 uint32_t image_idx;
@@ -796,86 +837,6 @@ int main() {
                 } else {
                         assert(res == VK_SUCCESS);
                 }
-
-                // Before recording graphics, wait for compute to finish
-                // I think I could combine this with the copy more efficiently with a barrier
-                // This is so painfully inefficient it's not even funny
-                res = vkWaitForFences(base.device, 1, &sync_set->compute_fence, VK_TRUE,
-                                      UINT64_MAX);
-                assert(res == VK_SUCCESS);
-                res = vkResetFences(base.device, 1, &sync_set->compute_fence);
-                assert(res == VK_SUCCESS);
-
-                // Copy what the compute shader outputted to a CPU-visible buffer
-                buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
-                            compute_buf_reader.handle, sizeof(struct ComputeOut));
-                // We only use the results at the beginning of next frame, apart from applying
-                // impulse below
-
-                // Update object positions and debug input
-                struct timespec start_time = timer_start();
-
-                // Apply impulse
-                /*
-                printf("Total linear impulse: %5.2f %5.2f %5.2f\n",
-                       compute_out_mapped->linear_impulse[0], compute_out_mapped->linear_impulse[1],
-                       compute_out_mapped->linear_impulse[2]);
-                */
-                uint32_t col_count = compute_out_mapped->collision_count;
-                printf("col count: %u\n", col_count);
-                if (col_count > 0) {
-                        scene_data->objects[0].linear_vel[0] +=
-                                compute_out_mapped->linear_impulse[0] / col_count;
-                        scene_data->objects[0].linear_vel[1] +=
-                                compute_out_mapped->linear_impulse[1] / col_count;
-                        scene_data->objects[0].linear_vel[2] +=
-                                compute_out_mapped->linear_impulse[2] / col_count;
-
-                        scene_data->objects[0].angular_vel[0] +=
-                                compute_out_mapped->angular_impulse[0] / col_count;
-                        scene_data->objects[0].angular_vel[1] +=
-                                compute_out_mapped->angular_impulse[1] / col_count;
-                        scene_data->objects[0].angular_vel[2] +=
-                                compute_out_mapped->angular_impulse[2] / col_count;
-                }
-
-                // Integrate velocity to position
-                scene_data->objects[0].pos[0] += scene_data->objects[0].linear_vel[0];
-                scene_data->objects[0].pos[1] += scene_data->objects[0].linear_vel[1];
-                scene_data->objects[0].pos[2] += scene_data->objects[0].linear_vel[2];
-
-                // Apply angular velocity
-                vec3 omega;
-                memcpy(omega, scene_data->objects[0].angular_vel, sizeof(vec3));
-                mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
-                                    {omega[2], 0, -omega[0], 0},
-                                    {-omega[1], omega[0], 0, 0},
-                                    {0, 0, 0, 1}};
-
-                mat4 derivative;
-                glm_mat4_mul(omega_tilde, scene_data->objects[0].transform, derivative);
-
-                for (int i = 0; i < 3; i++) {
-                        for (int j = 0; j < 3; j++) {
-                                scene_data->objects[0].orientation[i][j] -= derivative[i][j];
-                        }
-                }
-
-                reorthogonalize(scene_data->objects[0].orientation,
-                                scene_data->objects[0].orientation);
-
-                // Generate all transform matrices from position and orientation
-                for (int i = 0; i < scene_data->count[0]; i++) {
-                        object_make_transform(&scene_data->objects[0]);
-                }
-
-                total_collision_time += timer_get_elapsed(&start_time);
-
-                /*
-                printf("New pos: %5.2f %5.2f %5.2f\n", scene_data->objects[0].transform[3][0],
-                       scene_data->objects[0].transform[3][1],
-                       scene_data->objects[0].transform[3][2]);
-                */
 
                 // Copy new scene data to graphics input
                 buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
@@ -964,9 +925,9 @@ int main() {
                 image_fences[image_idx] = sync_set->render_fence;
 
                 // Submit
-                VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                                      VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
-                VkSemaphore wait_sems[] = {sync_set->acquire_sem, sync_set->compute_sem};
+                VkPipelineStageFlags wait_stages[] = {
+                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+                VkSemaphore wait_sems[] = {sync_set->acquire_sem};
                 static_assert(sizeof(wait_stages) / sizeof(wait_stages[0]) ==
                                       sizeof(wait_sems) / sizeof(wait_sems[0]),
                               "Must have same # of wait stages and wait semaphores");

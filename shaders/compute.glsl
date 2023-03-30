@@ -50,8 +50,8 @@ void compute_impulse(vec3 point, Object a, Object b) {
 
 	// For deep penetrations, the two might cancel each other out. Oh well, nothing we
 	// can really do.
-	//vec3 collision_normal = (-my_normal + other_normal) * 0.5;
-	vec3 collision_normal = other_normal;
+	vec3 collision_normal = (-my_normal + other_normal) * 0.5;
+	//vec3 collision_normal = other_normal;
 
 	if (length(collision_normal) == 0) return;
 	collision_normal = normalize(collision_normal);
@@ -163,9 +163,10 @@ void compute_impulse(vec3 point, Object a, Object b) {
 	atomicAdd(out_buf.angular_impulse.z, angular_impulse.z);
 
 	// All the atomic adds seem like they should be really slow, but somehow aren't.
-	uint idx = atomicAdd(out_buf.collision_count, 1);
+	//atomicAdd(out_buf.collision_count, 1);
 
 	// Add a line to debug view, as long as there is space
+	uint idx = atomicAdd(out_buf.debug_out_idx, 1);
 	if (idx < DEBUG_MAX_LINES) {
 		debug_buf.line_poss[idx] = point;
 		debug_buf.line_dirs[idx] = vec3(collision_normal);
@@ -186,9 +187,8 @@ void main() {
 	float dist0 = scene_sdf(a_type, a_transform, point);
 	float dist1 = scene_sdf(b_type, b_transform, point);
 
-	if (dist0 <= 0 && dist1 <= 0) {
-		if (atomicAdd(out_buf.debug_out_idx, 1) == 0) {
-			compute_impulse(point, in_buf.objects[0], in_buf.objects[1]);
-		}
+	float thresh = length(vec3(0.0125));
+	if (dist0 <= thresh && dist1 <= thresh && atomicAdd(out_buf.collision_count, 1) == 0) {
+		compute_impulse(point, in_buf.objects[0], in_buf.objects[1]);
 	}
 }
