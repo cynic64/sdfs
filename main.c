@@ -42,6 +42,9 @@ const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_UNORM;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 const VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 
+// User can pause and unpause physics sim
+int run_physics = 1;
+
 // aligned(16) only aligns the start of the structure, not the members. I don't think it's necessary
 // but gcc complains otherwise.
 struct __attribute__((packed, aligned(16))) PushConstants {
@@ -145,8 +148,8 @@ void get_init_data(struct Scene *data) {
         data->objects[0].type[0] = 5;
         data->objects[0].pos[1] = 4;
         glm_mat4_identity(data->objects[0].orientation);
-        data->objects[0].angular_vel[2] = 0.005;
-        data->objects[0].angular_vel[1] = 0.005;
+        // data->objects[0].angular_vel[2] = 0.005;
+        // data->objects[0].angular_vel[1] = 0.005;
         object_make_transform(&data->objects[0]);
 
         // Cube 2
@@ -317,6 +320,21 @@ void handle_input(GLFWwindow *window, double *last_mouse_x, double *last_mouse_y
                           d_mouse_y * MOUSE_SENSITIVITY_FACTOR, cam_movement, delta);
 
         *last_frame_time = timer_start();
+}
+
+// Most input handling is done in `handle_input` because I only care about whether they key is up or
+// down. But if I did that for physics pause/unpause, it would trigger over and over again for every
+// frame the user holds the key. So we process pause/unpause here instead.
+void physics_key_callback(GLFWwindow *window, int key, int scancode, int action, int mods) {
+        // Make gcc shut up about "unused parameter"
+        (void)window;
+        (void)scancode;
+        (void)mods;
+
+        if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
+                printf("Toggle\n");
+                run_physics = !run_physics;
+        }
 }
 
 int main() {
@@ -682,6 +700,8 @@ int main() {
         struct timespec start_time = timer_start();
         struct timespec last_frame_time = timer_start();
         double total_collision_time = 0;
+        // User can pause physics
+        glfwSetKeyCallback(window, &physics_key_callback);
 
         while (!glfwWindowShouldClose(window)) {
                 while (must_recreate) {
@@ -713,117 +733,119 @@ int main() {
                 res = vkWaitForFences(base.device, 1, &sync_set->render_fence, VK_TRUE, UINT64_MAX);
                 assert(res == VK_SUCCESS);
 
-                // Apply gravity, but only to first object
-                scene_data->objects[0].linear_vel[1] -= 0.0001;
+                if (run_physics) {
+                        // Apply gravity, but only to first object
+                        scene_data->objects[0].linear_vel[1] -= 0.00001;
 
-                /*
-                // Apply world's simplest drag model
-                scene_data->objects[0].linear_vel[0] *= 0.99;
-                scene_data->objects[0].linear_vel[1] *= 0.99;
-                scene_data->objects[0].linear_vel[2] *= 0.99;
+                        /*
+                        // Apply world's simplest drag model
+                        scene_data->objects[0].linear_vel[0] *= 0.99;
+                        scene_data->objects[0].linear_vel[1] *= 0.99;
+                        scene_data->objects[0].linear_vel[2] *= 0.99;
 
-                scene_data->objects[0].angular_vel[0] *= 0.99;
-                scene_data->objects[0].angular_vel[1] *= 0.99;
-                scene_data->objects[0].angular_vel[2] *= 0.99;
-                */
+                        scene_data->objects[0].angular_vel[0] *= 0.99;
+                        scene_data->objects[0].angular_vel[1] *= 0.99;
+                        scene_data->objects[0].angular_vel[2] *= 0.99;
+                        */
 
-                //////// begin physics
+                        //////// begin physics
 
-		// Copy latest data to compute shader input
-		buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
-			    compute_in_bufs[frame_idx].handle, sizeof(struct Scene));
-		// Also reset compute buffer's output
-		buffer_copy(base.queue, copy_cbuf, compute_out_staging.handle,
-			    compute_out_bufs[frame_idx].handle, sizeof(struct ComputeOut));
-		// And debug buffer's input
-		buffer_copy(base.queue, copy_cbuf, debug_in_staging.handle,
-			    debug_in_buf.handle, sizeof(struct Debug));
+                        // Copy latest data to compute shader input
+                        buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
+                                    compute_in_bufs[frame_idx].handle, sizeof(struct Scene));
+                        // Also reset compute buffer's output
+                        buffer_copy(base.queue, copy_cbuf, compute_out_staging.handle,
+                                    compute_out_bufs[frame_idx].handle, sizeof(struct ComputeOut));
+                        // And debug buffer's input
+                        buffer_copy(base.queue, copy_cbuf, debug_in_staging.handle,
+                                    debug_in_buf.handle, sizeof(struct Debug));
 
-		// Record compute dispatch
-		vkResetCommandBuffer(compute_cbuf, 0);
-		cbuf_begin_onetime(compute_cbuf);
-		vkCmdBindPipeline(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
-				    compute_pipe);
-		vkCmdBindDescriptorSets(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
-					compute_pipe_layout, 0, 1, &compute_sets[frame_idx],
-					0, NULL);
-		vkCmdDispatch(compute_cbuf, 20, 20, 20);
-		res = vkEndCommandBuffer(compute_cbuf);
-		assert(res == VK_SUCCESS);
+                        // Record compute dispatch
+                        vkResetCommandBuffer(compute_cbuf, 0);
+                        cbuf_begin_onetime(compute_cbuf);
+                        vkCmdBindPipeline(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                          compute_pipe);
+                        vkCmdBindDescriptorSets(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                                compute_pipe_layout, 0, 1, &compute_sets[frame_idx],
+                                                0, NULL);
+                        vkCmdDispatch(compute_cbuf, 20, 20, 20);
+                        res = vkEndCommandBuffer(compute_cbuf);
+                        assert(res == VK_SUCCESS);
 
-		VkSubmitInfo compute_submit_info = {0};
-		compute_submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-		compute_submit_info.commandBufferCount = 1;
-		compute_submit_info.pCommandBuffers = &compute_cbuf;
+                        VkSubmitInfo compute_submit_info = {0};
+                        compute_submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                        compute_submit_info.commandBufferCount = 1;
+                        compute_submit_info.pCommandBuffers = &compute_cbuf;
 
-		res = vkQueueSubmit(base.queue, 1, &compute_submit_info,
-				    sync_set->compute_fence);
-		assert(res == VK_SUCCESS);
+                        res = vkQueueSubmit(base.queue, 1, &compute_submit_info,
+                                            sync_set->compute_fence);
+                        assert(res == VK_SUCCESS);
 
-		// Wait for compute to finish. There must be a more efficient way,
-		// integrating velocity on the GPU would help a lot already.
-		res = vkWaitForFences(base.device, 1, &sync_set->compute_fence, VK_TRUE,
-					UINT64_MAX);
-		assert(res == VK_SUCCESS);
-		res = vkResetFences(base.device, 1, &sync_set->compute_fence);
-		assert(res == VK_SUCCESS);
+                        // Wait for compute to finish. There must be a more efficient way,
+                        // integrating velocity on the GPU would help a lot already.
+                        res = vkWaitForFences(base.device, 1, &sync_set->compute_fence, VK_TRUE,
+                                              UINT64_MAX);
+                        assert(res == VK_SUCCESS);
+                        res = vkResetFences(base.device, 1, &sync_set->compute_fence);
+                        assert(res == VK_SUCCESS);
 
-		// Copy what the compute shader outputted to a CPU-visible buffer
-		buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
-			    compute_buf_reader.handle, sizeof(struct ComputeOut));
+                        // Copy what the compute shader outputted to a CPU-visible buffer
+                        buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
+                                    compute_buf_reader.handle, sizeof(struct ComputeOut));
 
-		// Update object positions and debug input
+                        // Update object positions and debug input
 
-		// Apply impulse
-		int col_count = compute_out_mapped->collision_count;
-		printf("col count: %u\n", col_count);
-		if (col_count > 0) {
-			col_count = 1;
-			scene_data->objects[0].linear_vel[0] +=
-				compute_out_mapped->linear_impulse[0] / col_count;
-			scene_data->objects[0].linear_vel[1] +=
-				compute_out_mapped->linear_impulse[1] / col_count;
-			scene_data->objects[0].linear_vel[2] +=
-				compute_out_mapped->linear_impulse[2] / col_count;
+                        // Apply impulse
+                        int col_count = compute_out_mapped->collision_count;
+                        printf("col count: %u\n", col_count);
+                        if (col_count > 0) {
+                                col_count = 1;
+                                scene_data->objects[0].linear_vel[0] +=
+                                        compute_out_mapped->linear_impulse[0] / col_count;
+                                scene_data->objects[0].linear_vel[1] +=
+                                        compute_out_mapped->linear_impulse[1] / col_count;
+                                scene_data->objects[0].linear_vel[2] +=
+                                        compute_out_mapped->linear_impulse[2] / col_count;
 
-			scene_data->objects[0].angular_vel[0] +=
-				compute_out_mapped->angular_impulse[0] / col_count;
-			scene_data->objects[0].angular_vel[1] +=
-				compute_out_mapped->angular_impulse[1] / col_count;
-			scene_data->objects[0].angular_vel[2] +=
-				compute_out_mapped->angular_impulse[2] / col_count;
-		}
+                                scene_data->objects[0].angular_vel[0] +=
+                                        compute_out_mapped->angular_impulse[0] / col_count;
+                                scene_data->objects[0].angular_vel[1] +=
+                                        compute_out_mapped->angular_impulse[1] / col_count;
+                                scene_data->objects[0].angular_vel[2] +=
+                                        compute_out_mapped->angular_impulse[2] / col_count;
+                        }
 
-		// Integrate velocity to position
-		scene_data->objects[0].pos[0] += scene_data->objects[0].linear_vel[0];
-		scene_data->objects[0].pos[1] += scene_data->objects[0].linear_vel[1];
-		scene_data->objects[0].pos[2] += scene_data->objects[0].linear_vel[2];
+                        // Integrate velocity to position
+                        scene_data->objects[0].pos[0] += scene_data->objects[0].linear_vel[0];
+                        scene_data->objects[0].pos[1] += scene_data->objects[0].linear_vel[1];
+                        scene_data->objects[0].pos[2] += scene_data->objects[0].linear_vel[2];
 
-		// Apply angular velocity
-		vec3 omega;
-		memcpy(omega, scene_data->objects[0].angular_vel, sizeof(vec3));
-		mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
-				    {omega[2], 0, -omega[0], 0},
-				    {-omega[1], omega[0], 0, 0},
-				    {0, 0, 0, 1}};
+                        // Apply angular velocity
+                        vec3 omega;
+                        memcpy(omega, scene_data->objects[0].angular_vel, sizeof(vec3));
+                        mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
+                                            {omega[2], 0, -omega[0], 0},
+                                            {-omega[1], omega[0], 0, 0},
+                                            {0, 0, 0, 1}};
 
-		mat4 derivative;
-		glm_mat4_mul(omega_tilde, scene_data->objects[0].transform, derivative);
+                        mat4 derivative;
+                        glm_mat4_mul(omega_tilde, scene_data->objects[0].transform, derivative);
 
-		for (int i = 0; i < 3; i++) {
-			for (int j = 0; j < 3; j++) {
-				scene_data->objects[0].orientation[i][j] -=
-					derivative[i][j];
-			}
-		}
+                        for (int i = 0; i < 3; i++) {
+                                for (int j = 0; j < 3; j++) {
+                                        scene_data->objects[0].orientation[i][j] -=
+                                                derivative[i][j];
+                                }
+                        }
 
-		reorthogonalize(scene_data->objects[0].orientation,
-				scene_data->objects[0].orientation);
+                        reorthogonalize(scene_data->objects[0].orientation,
+                                        scene_data->objects[0].orientation);
 
-		// Generate all transform matrices from position and orientation
-		for (int i = 0; i < scene_data->count[0]; i++) {
-			object_make_transform(&scene_data->objects[0]);
-		}
+                        // Generate all transform matrices from position and orientation
+                        for (int i = 0; i < scene_data->count[0]; i++) {
+                                object_make_transform(&scene_data->objects[0]);
+                        }
+                }
 
                 //////// end physics
 
