@@ -854,6 +854,7 @@ int main() {
 
         // Main loop
         int frame_ct = 0;
+        int run_physics = 1;
         struct timespec start_time = timer_start();
         struct timespec last_frame_time = timer_start();
 
@@ -907,97 +908,103 @@ int main() {
 
                 //////// begin physics
 
-                // Copy latest data to compute shader input
-                buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
-                            compute_in_bufs[frame_idx].handle, sizeof(struct Scene));
-                // Also reset compute buffer's output
-                buffer_copy(base.queue, copy_cbuf, compute_out_staging.handle,
-                            compute_out_bufs[frame_idx].handle, sizeof(struct ComputeOut));
-                // And debug buffer's input
-                buffer_copy(base.queue, copy_cbuf, debug_in_staging.handle, debug_in_buf.handle,
-                            sizeof(struct Debug));
+                int collision_count = 0;
+                if (run_physics) {
+                        // Copy latest data to compute shader input
+                        buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
+                                    compute_in_bufs[frame_idx].handle, sizeof(struct Scene));
+                        // Also reset compute buffer's output
+                        buffer_copy(base.queue, copy_cbuf, compute_out_staging.handle,
+                                    compute_out_bufs[frame_idx].handle, sizeof(struct ComputeOut));
+                        // And debug buffer's input
+                        buffer_copy(base.queue, copy_cbuf, debug_in_staging.handle,
+                                    debug_in_buf.handle, sizeof(struct Debug));
 
-                // Record compute dispatch
-                vkResetCommandBuffer(compute_cbuf, 0);
-                cbuf_begin_onetime(compute_cbuf);
-                vkCmdBindPipeline(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, compute_pipe);
-                vkCmdBindDescriptorSets(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
-                                        compute_pipe_layout, 0, 1, &compute_sets[frame_idx], 0,
-                                        NULL);
-                vkCmdDispatch(compute_cbuf, 20, 20, 20);
-                res = vkEndCommandBuffer(compute_cbuf);
-                assert(res == VK_SUCCESS);
+                        // Record compute dispatch
+                        vkResetCommandBuffer(compute_cbuf, 0);
+                        cbuf_begin_onetime(compute_cbuf);
+                        vkCmdBindPipeline(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                          compute_pipe);
+                        vkCmdBindDescriptorSets(compute_cbuf, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                                compute_pipe_layout, 0, 1, &compute_sets[frame_idx],
+                                                0, NULL);
+                        vkCmdDispatch(compute_cbuf, 20, 20, 20);
+                        res = vkEndCommandBuffer(compute_cbuf);
+                        assert(res == VK_SUCCESS);
 
-                VkSubmitInfo compute_submit_info = {0};
-                compute_submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-                compute_submit_info.commandBufferCount = 1;
-                compute_submit_info.pCommandBuffers = &compute_cbuf;
+                        VkSubmitInfo compute_submit_info = {0};
+                        compute_submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                        compute_submit_info.commandBufferCount = 1;
+                        compute_submit_info.pCommandBuffers = &compute_cbuf;
 
-                res = vkQueueSubmit(base.queue, 1, &compute_submit_info, sync_set->compute_fence);
-                assert(res == VK_SUCCESS);
+                        res = vkQueueSubmit(base.queue, 1, &compute_submit_info,
+                                            sync_set->compute_fence);
+                        assert(res == VK_SUCCESS);
 
-                // Wait for compute to finish. There must be a more efficient way,
-                // integrating velocity on the GPU would help a lot already.
-                res = vkWaitForFences(base.device, 1, &sync_set->compute_fence, VK_TRUE,
-                                      UINT64_MAX);
-                assert(res == VK_SUCCESS);
-                res = vkResetFences(base.device, 1, &sync_set->compute_fence);
-                assert(res == VK_SUCCESS);
+                        // Wait for compute to finish. There must be a more efficient way,
+                        // integrating velocity on the GPU would help a lot already.
+                        res = vkWaitForFences(base.device, 1, &sync_set->compute_fence, VK_TRUE,
+                                              UINT64_MAX);
+                        assert(res == VK_SUCCESS);
+                        res = vkResetFences(base.device, 1, &sync_set->compute_fence);
+                        assert(res == VK_SUCCESS);
 
-                // Copy what the compute shader outputted to a CPU-visible buffer
-                buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
-                            compute_buf_reader.handle, sizeof(struct ComputeOut));
+                        // Copy what the compute shader outputted to a CPU-visible buffer
+                        buffer_copy(base.queue, compute_cbuf, compute_out_bufs[frame_idx].handle,
+                                    compute_buf_reader.handle, sizeof(struct ComputeOut));
 
-                // Update object positions and debug input
+                        // Update object positions and debug input
 
-                // Apply impulse
-                int collision_count = compute_out_mapped->collision_count;
-                // printf("col count: %u\n", col_count);
-                if (collision_count > 0) {
-                        scene_data->objects[0].linear_vel[0] +=
-                                compute_out_mapped->linear_impulse[0] / 1;
-                        scene_data->objects[0].linear_vel[1] +=
-                                compute_out_mapped->linear_impulse[1] / 1;
-                        scene_data->objects[0].linear_vel[2] +=
-                                compute_out_mapped->linear_impulse[2] / 1;
+                        // Apply impulse
+                        collision_count = compute_out_mapped->collision_count;
+                        // printf("col count: %u\n", col_count);
+                        if (collision_count > 0) {
+                                scene_data->objects[0].linear_vel[0] +=
+                                        compute_out_mapped->linear_impulse[0] / 1;
+                                scene_data->objects[0].linear_vel[1] +=
+                                        compute_out_mapped->linear_impulse[1] / 1;
+                                scene_data->objects[0].linear_vel[2] +=
+                                        compute_out_mapped->linear_impulse[2] / 1;
 
-                        scene_data->objects[0].angular_vel[0] +=
-                                compute_out_mapped->angular_impulse[0] / 1;
-                        scene_data->objects[0].angular_vel[1] +=
-                                compute_out_mapped->angular_impulse[1] / 1;
-                        scene_data->objects[0].angular_vel[2] +=
-                                compute_out_mapped->angular_impulse[2] / 1;
-                }
-
-                // Integrate velocity to position
-                scene_data->objects[0].pos[0] += scene_data->objects[0].linear_vel[0];
-                scene_data->objects[0].pos[1] += scene_data->objects[0].linear_vel[1];
-                scene_data->objects[0].pos[2] += scene_data->objects[0].linear_vel[2];
-
-                // Apply angular velocity
-                vec3 omega;
-                memcpy(omega, scene_data->objects[0].angular_vel, sizeof(vec3));
-                mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
-                                    {omega[2], 0, -omega[0], 0},
-                                    {-omega[1], omega[0], 0, 0},
-                                    {0, 0, 0, 1}};
-                glm_mat4_transpose(omega_tilde);
-
-                mat4 derivative;
-                glm_mat4_mul(omega_tilde, scene_data->objects[0].transform, derivative);
-
-                for (int i = 0; i < 3; i++) {
-                        for (int j = 0; j < 3; j++) {
-                                scene_data->objects[0].orientation[i][j] += derivative[i][j];
+                                scene_data->objects[0].angular_vel[0] +=
+                                        compute_out_mapped->angular_impulse[0] / 1;
+                                scene_data->objects[0].angular_vel[1] +=
+                                        compute_out_mapped->angular_impulse[1] / 1;
+                                scene_data->objects[0].angular_vel[2] +=
+                                        compute_out_mapped->angular_impulse[2] / 1;
                         }
-                }
 
-                reorthogonalize(scene_data->objects[0].orientation,
-                                scene_data->objects[0].orientation);
+                        // Integrate velocity to position
+                        scene_data->objects[0].pos[0] += scene_data->objects[0].linear_vel[0];
+                        scene_data->objects[0].pos[1] += scene_data->objects[0].linear_vel[1];
+                        scene_data->objects[0].pos[2] += scene_data->objects[0].linear_vel[2];
 
-                // Generate all transform matrices from position and orientation
-                for (int i = 0; i < scene_data->count[0]; i++) {
-                        object_make_transform(&scene_data->objects[0]);
+                        // Apply angular velocity
+                        vec3 omega;
+                        memcpy(omega, scene_data->objects[0].angular_vel, sizeof(vec3));
+                        mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
+                                            {omega[2], 0, -omega[0], 0},
+                                            {-omega[1], omega[0], 0, 0},
+                                            {0, 0, 0, 1}};
+                        glm_mat4_transpose(omega_tilde);
+
+                        mat4 derivative;
+                        glm_mat4_mul(omega_tilde, scene_data->objects[0].transform, derivative);
+
+                        for (int i = 0; i < 3; i++) {
+                                for (int j = 0; j < 3; j++) {
+                                        scene_data->objects[0].orientation[i][j] +=
+                                                derivative[i][j];
+                                }
+                        }
+
+                        reorthogonalize(scene_data->objects[0].orientation,
+                                        scene_data->objects[0].orientation);
+
+                        // Generate all transform matrices from position and orientation
+                        for (int i = 0; i < scene_data->count[0]; i++) {
+                                object_make_transform(&scene_data->objects[0]);
+                        }
                 }
 
                 //////// end physics
@@ -1159,7 +1166,8 @@ int main() {
 
                 // Maybe open debug
                 if (open_debug) {
-                        printf("p: unpause\n");
+                        printf("c: continue rendering\n");
+                        printf("P: toggle physics\n");
                         printf("n: step to next frame\n");
 
                         while (1) {
@@ -1169,12 +1177,15 @@ int main() {
                                         continue;
                                 }
 
-                                if (command == 'p') {
-                                        printf("Unpause\n");
+                                if (command == 'c') {
+                                        printf("Continue\n");
                                         open_debug = 0;
                                         break;
                                 } else if (command == 'n') {
                                         break;
+                                } else if (command == 'P') {
+                                        run_physics = !run_physics;
+                                        printf("Run physics: %d\n", run_physics);
                                 } else {
                                         printf("Don't know what %c is\n", command);
                                 }
