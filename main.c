@@ -150,17 +150,15 @@ void sync_set_destroy(VkDevice device, struct SyncSet *sync_set) {
 
 // `src` must be null-terminated
 void text_write(struct Text *dst, const char *src, float x, float y, float scale) {
-	// 0.5x for y scale makes it look about right on my 16:9 monitor. Not exactly the epitome of
-	// elegant code, I know...
-	glm_scale_make(dst->transform, (vec3) {scale, scale*0.5, 0});
-	glm_translated(dst->transform, (vec3) {x, y, 0});
-
-	int i;
+        int i;
         for (i = 0; src[i] != '\0'; i++) {
                 assert(i < TEXT_MAX_CHARS);
                 dst->chars[4 * i] = src[i];
         }
         dst->char_count = i;
+
+        glm_scale_make(dst->transform, (vec3){scale * i / 2, scale, 0});
+        glm_translated(dst->transform, (vec3){x, y, 0});
 }
 
 void object_make_transform(struct Object *object) {
@@ -268,16 +266,14 @@ void recreate_images(struct Base *base, VkRenderPass rpass, struct Swapchain *sw
         }
 }
 
-// Will update last_mouse_{x,y}, camera position, last frame time
+// Will update last_mouse_{x,y}, camera position
 void handle_input(GLFWwindow *window, double *last_mouse_x, double *last_mouse_y,
-                  struct timespec *last_frame_time, struct CameraFly *camera,
-                  struct Scene *scene_data) {
+                  struct CameraFly *camera, struct Scene *scene_data, float delta) {
         // Mouse movement
         vec3 cam_movement = {0.0F, 0.0F, 0.0F};
         double new_mouse_x, new_mouse_y;
         glfwGetCursorPos(window, &new_mouse_x, &new_mouse_y);
         double d_mouse_x = new_mouse_x - *last_mouse_x, d_mouse_y = new_mouse_y - *last_mouse_y;
-        double delta = timer_get_elapsed(last_frame_time);
         *last_mouse_x = new_mouse_x;
         *last_mouse_y = new_mouse_y;
 
@@ -347,8 +343,6 @@ void handle_input(GLFWwindow *window, double *last_mouse_x, double *last_mouse_y
         // Update camera
         camera_fly_update(camera, d_mouse_x * MOUSE_SENSITIVITY_FACTOR,
                           d_mouse_y * MOUSE_SENSITIVITY_FACTOR, cam_movement, delta);
-
-        *last_frame_time = timer_start();
 }
 
 // Most input handling is done in `handle_input` because I only care about whether they key is up or
@@ -877,6 +871,9 @@ int main() {
         double total_collision_time = 0;
         // User can pause physics
         glfwSetKeyCallback(window, &physics_key_callback);
+        // For FPS running average
+        float frametime_history[256] = {0};
+        const int frametime_history_len = sizeof(frametime_history) / sizeof(frametime_history[0]);
 
         while (!glfwWindowShouldClose(window)) {
                 while (must_recreate) {
@@ -892,8 +889,11 @@ int main() {
                 }
 
                 // Handle input
-                handle_input(window, &last_mouse_x, &last_mouse_y, &last_frame_time, &camera,
-                             scene_data);
+                float delta = timer_get_elapsed(&last_frame_time);
+                handle_input(window, &last_mouse_x, &last_mouse_y, &camera, scene_data, delta);
+
+                last_frame_time = timer_start();
+                frametime_history[frame_ct % frametime_history_len] = delta;
 
                 // Set up frame
                 int frame_idx = frame_ct % CONCURRENT_FRAMES;
@@ -908,6 +908,7 @@ int main() {
                 res = vkWaitForFences(base.device, 1, &sync_set->render_fence, VK_TRUE, UINT64_MAX);
                 assert(res == VK_SUCCESS);
 
+		int collision_count = 0;
                 if (run_physics) {
                         // Apply gravity, but only to first object
                         // scene_data->objects[0].linear_vel[1] -= 0.0001;
@@ -971,23 +972,22 @@ int main() {
                         // Update object positions and debug input
 
                         // Apply impulse
-                        int col_count = compute_out_mapped->collision_count;
+                        collision_count = compute_out_mapped->collision_count;
                         // printf("col count: %u\n", col_count);
-                        if (col_count > 0) {
-                                col_count = 1;
+                        if (collision_count > 0) {
                                 scene_data->objects[0].linear_vel[0] +=
-                                        compute_out_mapped->linear_impulse[0] / col_count;
+                                        compute_out_mapped->linear_impulse[0] / 1;
                                 scene_data->objects[0].linear_vel[1] +=
-                                        compute_out_mapped->linear_impulse[1] / col_count;
+                                        compute_out_mapped->linear_impulse[1] / 1;
                                 scene_data->objects[0].linear_vel[2] +=
-                                        compute_out_mapped->linear_impulse[2] / col_count;
+                                        compute_out_mapped->linear_impulse[2] / 1;
 
                                 scene_data->objects[0].angular_vel[0] +=
-                                        compute_out_mapped->angular_impulse[0] / col_count;
+                                        compute_out_mapped->angular_impulse[0] / 1;
                                 scene_data->objects[0].angular_vel[1] +=
-                                        compute_out_mapped->angular_impulse[1] / col_count;
+                                        compute_out_mapped->angular_impulse[1] / 1;
                                 scene_data->objects[0].angular_vel[2] +=
-                                        compute_out_mapped->angular_impulse[2] / col_count;
+                                        compute_out_mapped->angular_impulse[2] / 1;
                         }
 
                         // Integrate velocity to position
@@ -1043,11 +1043,18 @@ int main() {
                 }
 
                 // Copy new scene data to graphics input
-                text_write(text_staging_mapped, "potato", 0.3, 0.3, 0.2);
                 buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
                             graphics_in_bufs[frame_idx].handle, sizeof(*scene_data));
 
                 // Copy new text data to text input
+                float frametime_sum = 0;
+                for (int i = 0; i < frametime_history_len; i++) {
+                        frametime_sum += frametime_history[i];
+                }
+		float fps_running_avg = frametime_history_len / frametime_sum;
+                char text[256];
+		sprintf(text, "FPS: %.1f | Collisions: %d", fps_running_avg, collision_count);
+                text_write(text_staging_mapped, text, 0, -0.9, 0.02);
                 buffer_copy(base.queue, copy_cbuf, text_staging.handle,
                             text_in_bufs[frame_idx].handle, sizeof(*text_staging_mapped));
 
