@@ -112,6 +112,15 @@ struct __attribute__((packed, aligned(16))) Debug {
         vec4 line_dirs[DEBUG_MAX_LINES]; // vec3[]
 };
 
+#define TEXT_MAX_CHARS 256
+struct __attribute__((packed, aligned(16))) Text {
+        mat4 transform;
+        // Yeah, this wastes a ton of space, but I can't avoid it without using textures and I'm too
+        // lazy. It's not like we're passing megabytes of text, so whatever.
+        int chars[4 * TEXT_MAX_CHARS]; // int[TEXT_MAX_CHARS]
+        int char_count;
+};
+
 // This stuff exists for every concurrent frame
 struct SyncSet {
         VkFence render_fence;
@@ -137,6 +146,21 @@ void sync_set_destroy(VkDevice device, struct SyncSet *sync_set) {
         vkDestroyFence(device, sync_set->compute_fence, NULL);
         vkDestroySemaphore(device, sync_set->acquire_sem, NULL);
         vkDestroySemaphore(device, sync_set->render_sem, NULL);
+}
+
+// `src` must be null-terminated
+void text_write(struct Text *dst, const char *src, float x, float y, float scale) {
+	// 0.5x for y scale makes it look about right on my 16:9 monitor. Not exactly the epitome of
+	// elegant code, I know...
+	glm_scale_make(dst->transform, (vec3) {scale, scale*0.5, 0});
+	glm_translated(dst->transform, (vec3) {x, y, 0});
+
+	int i;
+        for (i = 0; src[i] != '\0'; i++) {
+                assert(i < TEXT_MAX_CHARS);
+                dst->chars[4 * i] = src[i];
+        }
+        dst->char_count = i;
 }
 
 void object_make_transform(struct Object *object) {
@@ -367,22 +391,59 @@ int main() {
         int font_width, font_height;
         uint8_t *font_bytes;
         load_font("font.txt", &font_width, &font_height, &font_bytes);
-        for (int i = 0; i < '~' - ' ' + 1; i++) {
-		printf("%c:\n", (char) (i + ' '));
-                for (int j = 0; j < font_height; j++) {
-                        for (int k = 0; k < font_width; k++) {
-                                printf(font_bytes[i * font_width * font_height + j * font_width +
-                                                  k] == 255
-                                               ? "#"
-                                               : ".");
-                        }
-                        printf("\n");
-                }
-		printf("---\n");
-        }
+
+        // Copy font to image
+        struct Image font_image;
+        image_create(base.phys_dev, base.device, VK_FORMAT_R8_UNORM, VK_IMAGE_TYPE_2D, font_width,
+                     font_height * FONT_CHAR_COUNT, 1, VK_IMAGE_TILING_OPTIMAL,
+                     VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                     VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 0, 1,
+                     VK_SAMPLE_COUNT_1_BIT, &font_image);
+        int font_byte_count = FONT_CHAR_COUNT * font_height * font_height;
+
+        struct Buffer font_staging;
+        buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      font_byte_count, &font_staging);
+
+        uint8_t *font_staging_mapped;
+        VkResult res = vkMapMemory(base.device, font_staging.mem, 0, font_byte_count, 0,
+                                   (void **)&font_staging_mapped);
+        assert(res == VK_SUCCESS);
+        memcpy(font_staging_mapped, font_bytes, font_byte_count);
+        vkUnmapMemory(base.device, font_staging.mem);
         free(font_bytes);
-        // struct Image font_image;
-        // image_create(base.phys_dev, base.device, VK_FORMAT_R8_UNORM, VK_IMAGE_TYPE_2D, font_width
+
+        // Create sampler for font
+        VkSamplerCreateInfo font_sampler_info = {0};
+        font_sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        font_sampler_info.magFilter = VK_FILTER_NEAREST;
+        font_sampler_info.minFilter = VK_FILTER_NEAREST;
+        font_sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        font_sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        font_sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        font_sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        VkSampler font_sampler;
+        res = vkCreateSampler(base.device, &font_sampler_info, 0, &font_sampler);
+        assert(res == VK_SUCCESS);
+
+        // Not sure if the access/stage flags are right
+        // undefined -> transfer_dst_optimal
+        image_trans(base.device, base.queue, base.cpool, font_image.handle,
+                    VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 1);
+        image_copy_from_buffer(base.device, base.queue, base.cpool, VK_IMAGE_ASPECT_COLOR_BIT,
+                               font_staging.handle, font_image.handle, font_width,
+                               font_height * FONT_CHAR_COUNT, 1);
+        // transfer_dst_optimal -> attachment_optimal
+        image_trans(base.device, base.queue, base.cpool, font_image.handle,
+                    VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                    VK_ACCESS_INPUT_ATTACHMENT_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 1);
+
+        buffer_destroy(base.device, &font_staging);
 
         // Swapchain
         struct Swapchain swapchain;
@@ -409,11 +470,19 @@ int main() {
         VkShaderModule debug_vs, debug_fs;
         VkPipelineShaderStageCreateInfo debug_shaders[2] = {0};
 
-        // Debug shaders
         load_shader(base.device, "shaders_processed/debug.vs.spv", &debug_vs,
                     VK_SHADER_STAGE_VERTEX_BIT, &debug_shaders[0]);
         load_shader(base.device, "shaders_processed/debug.fs.spv", &debug_fs,
                     VK_SHADER_STAGE_FRAGMENT_BIT, &debug_shaders[1]);
+
+        // Text shaders
+        VkShaderModule text_vs, text_fs;
+        VkPipelineShaderStageCreateInfo text_shaders[2] = {0};
+
+        load_shader(base.device, "shaders_processed/text.vs.spv", &text_vs,
+                    VK_SHADER_STAGE_VERTEX_BIT, &text_shaders[0]);
+        load_shader(base.device, "shaders_processed/text.fs.spv", &text_fs,
+                    VK_SHADER_STAGE_FRAGMENT_BIT, &text_shaders[1]);
 
         // Render pass
         VkRenderPass rpass;
@@ -446,7 +515,7 @@ int main() {
         bzero(debug_in_staging_mapped, sizeof(struct Debug));
         vkUnmapMemory(base.device, debug_in_staging.mem);
 
-        // Buffer for graphics
+        // Staging buffer for graphics
         struct Buffer graphics_in_bufs[CONCURRENT_FRAMES];
         struct Buffer scene_staging;
         buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -459,7 +528,23 @@ int main() {
                       VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Debug), &debug_in_buf);
 
-        // Initialize scene staging
+        // Staging buffer for text pass (this is where we specify what characters we want to draw)
+        struct Buffer text_in_bufs[CONCURRENT_FRAMES];
+        struct Buffer text_staging;
+        buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      sizeof(struct Text), &text_staging);
+        struct Text *text_staging_mapped;
+        res = vkMapMemory(base.device, text_staging.mem, 0, sizeof(*text_staging_mapped), 0,
+                          (void **)&text_staging_mapped);
+        assert(res == VK_SUCCESS);
+        text_staging_mapped->char_count = 4;
+        text_staging_mapped->chars[4 * 0] = 1;
+        text_staging_mapped->chars[4 * 1] = 2;
+        text_staging_mapped->chars[4 * 2] = 3;
+        text_staging_mapped->chars[4 * 3] = 4;
+
+        // Initialize scene data
         struct Scene *scene_data;
         vkMapMemory(base.device, scene_staging.mem, 0, sizeof(struct Scene), 0,
                     (void **)&scene_data);
@@ -489,9 +574,15 @@ int main() {
                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Scene),
                               &graphics_in_bufs[i]);
+
+                // We also might want to change text every frame
+                buffer_create(base.phys_dev, base.device,
+                              VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Text),
+                              &text_in_bufs[i]);
         }
 
-        // This is so we can read data back out
+        // This is so we can read data back out of the compute shader
         buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                       sizeof(struct ComputeOut), &compute_buf_reader);
@@ -514,24 +605,32 @@ int main() {
         debug_in_desc.stage = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT |
                               VK_SHADER_STAGE_FRAGMENT_BIT;
 
+        struct DescriptorInfo text_image_desc = {0};
+        text_image_desc.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        text_image_desc.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        struct DescriptorInfo text_uni_desc = {0};
+        text_uni_desc.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        text_uni_desc.stage = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
         // Create descriptor pool
         // Gotta be honest I have no idea what I'm doing here
         VkDescriptorPoolSize dpool_sizes[1] = {0};
         dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        // I think it has to be 5 for each CONCURRENT_FRAME because there's the 3 descriptors for
-        // the compute stage, 1 for the graphics stage and 1 more for debug
-        dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES * 5;
+        // I think it has to be 7 for each CONCURRENT_FRAME because there's the 3 descriptors for
+        // the compute stage, 1 for the graphics stage, 1 for debug and 2 for text
+        dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES * 7;
 
         VkDescriptorPoolCreateInfo dpool_info = {0};
         dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
         dpool_info.pPoolSizes = dpool_sizes;
-        // Need 3 sets per CONCURRENT_FRAME because there's 1 for compute, 1 for graphics and 1 for
-        // debug.
-        dpool_info.maxSets = 3 * CONCURRENT_FRAMES;
+        // Need 4 sets per CONCURRENT_FRAME because there's 1 for compute, 1 for graphics, 1 for
+        // debug and 1 for text.
+        dpool_info.maxSets = 4 * CONCURRENT_FRAMES;
 
         VkDescriptorPool dpool;
-        VkResult res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
+        res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
         assert(res == VK_SUCCESS);
 
         // Now make the sets
@@ -548,6 +647,11 @@ int main() {
         debug_set_info.desc_ct = 1;
         debug_set_info.descs = &debug_in_desc;
 
+        struct DescriptorInfo text_descs[] = {text_image_desc, text_uni_desc};
+        struct SetInfo text_set_info = {0};
+        text_set_info.desc_ct = sizeof(text_descs) / sizeof(text_descs[0]);
+        text_set_info.descs = text_descs;
+
         VkDescriptorSetLayout compute_set_layout;
         set_layout_create(base.device, &compute_set_info, &compute_set_layout);
 
@@ -557,9 +661,13 @@ int main() {
         VkDescriptorSetLayout debug_set_layout;
         set_layout_create(base.device, &debug_set_info, &debug_set_layout);
 
+        VkDescriptorSetLayout text_set_layout;
+        set_layout_create(base.device, &text_set_info, &text_set_layout);
+
         VkDescriptorSet compute_sets[CONCURRENT_FRAMES];
         VkDescriptorSet graphics_sets[CONCURRENT_FRAMES];
         VkDescriptorSet debug_sets[CONCURRENT_FRAMES];
+        VkDescriptorSet text_sets[CONCURRENT_FRAMES];
 
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 // Set for compute
@@ -592,6 +700,17 @@ int main() {
                 assert(sizeof(debug_buffers) / sizeof(debug_buffers[0]) == debug_set_info.desc_ct);
                 set_create(base.device, dpool, debug_set_layout, &debug_set_info, debug_buffers,
                            &debug_sets[i]);
+
+                // Sets for text
+                union SetHandle text_handles[2] = {0};
+                text_handles[0].image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                text_handles[0].image.imageView = font_image.view;
+                text_handles[0].image.sampler = font_sampler;
+                text_handles[1].buffer.buffer = text_in_bufs[i].handle;
+                text_handles[1].buffer.range = sizeof(struct Text);
+                assert(sizeof(text_handles) / sizeof(text_handles[0]) == text_set_info.desc_ct);
+                set_create(base.device, dpool, text_set_layout, &text_set_info, text_handles,
+                           &text_sets[i]);
         }
 
         // Compute pipeline
@@ -679,6 +798,31 @@ int main() {
 
         vkDestroyShaderModule(base.device, debug_vs, NULL);
         vkDestroyShaderModule(base.device, debug_fs, NULL);
+
+        // Text pipeline
+        // Layout
+        VkPipelineLayoutCreateInfo text_pipe_layout_info = {0};
+        text_pipe_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        text_pipe_layout_info.setLayoutCount = 1;
+        text_pipe_layout_info.pSetLayouts = &text_set_layout;
+
+        VkPipelineLayout text_pipe_layout;
+        res = vkCreatePipelineLayout(base.device, &text_pipe_layout_info, NULL, &text_pipe_layout);
+        assert(res == VK_SUCCESS);
+
+        // Actual pipeline
+        struct PipelineSettings text_pipe_settings = PIPELINE_SETTINGS_DEFAULT;
+        text_pipe_settings.depth.depthTestEnable = VK_FALSE;
+        text_pipe_settings.rasterizer.cullMode = VK_CULL_MODE_NONE;
+        text_pipe_settings.input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+        VkPipeline text_pipe;
+        pipeline_create(base.device, &text_pipe_settings,
+                        sizeof(text_shaders) / sizeof(text_shaders[0]), text_shaders,
+                        text_pipe_layout, rpass, 0, &text_pipe);
+
+        vkDestroyShaderModule(base.device, text_vs, NULL);
+        vkDestroyShaderModule(base.device, text_fs, NULL);
 
         // Framebuffers, we'll create them later
         VkFramebuffer *framebuffers = malloc(swapchain.image_ct * sizeof(framebuffers[0]));
@@ -828,7 +972,7 @@ int main() {
 
                         // Apply impulse
                         int col_count = compute_out_mapped->collision_count;
-                        //printf("col count: %u\n", col_count);
+                        // printf("col count: %u\n", col_count);
                         if (col_count > 0) {
                                 col_count = 1;
                                 scene_data->objects[0].linear_vel[0] +=
@@ -899,8 +1043,13 @@ int main() {
                 }
 
                 // Copy new scene data to graphics input
+                text_write(text_staging_mapped, "potato", 0.3, 0.3, 0.2);
                 buffer_copy(base.queue, copy_cbuf, scene_staging.handle,
-                            graphics_in_bufs[frame_idx].handle, sizeof(struct Scene));
+                            graphics_in_bufs[frame_idx].handle, sizeof(*scene_data));
+
+                // Copy new text data to text input
+                buffer_copy(base.queue, copy_cbuf, text_staging.handle,
+                            text_in_bufs[frame_idx].handle, sizeof(*text_staging_mapped));
 
                 // Record graphics commands
                 vkResetCommandBuffer(graphics_cbuf, 0);
@@ -965,6 +1114,13 @@ int main() {
                                         debug_pipe_layout, 0, 1, &debug_sets[frame_idx], 0, NULL);
 
                 vkCmdDraw(graphics_cbuf, 2, DEBUG_MAX_LINES, 0, 0);
+
+                // Text pass
+                vkCmdBindPipeline(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, text_pipe);
+                vkCmdBindDescriptorSets(graphics_cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                        text_pipe_layout, 0, 1, &text_sets[frame_idx], 0, NULL);
+
+                vkCmdDraw(graphics_cbuf, 6, 1, 0, 0);
 
                 vkCmdEndRenderPass(graphics_cbuf);
 
@@ -1032,13 +1188,17 @@ int main() {
 
         vkDeviceWaitIdle(base.device);
 
+        vkDestroySampler(base.device, font_sampler, 0);
+
         vkDestroyPipelineLayout(base.device, graphics_pipe_layout, NULL);
         vkDestroyPipelineLayout(base.device, compute_pipe_layout, NULL);
         vkDestroyPipelineLayout(base.device, debug_pipe_layout, NULL);
+        vkDestroyPipelineLayout(base.device, text_pipe_layout, NULL);
 
         vkDestroyPipeline(base.device, graphics_pipe, NULL);
         vkDestroyPipeline(base.device, compute_pipe, NULL);
         vkDestroyPipeline(base.device, debug_pipe, NULL);
+        vkDestroyPipeline(base.device, text_pipe, NULL);
 
         vkDestroyRenderPass(base.device, rpass, NULL);
 
@@ -1058,17 +1218,22 @@ int main() {
         vkDestroyDescriptorSetLayout(base.device, compute_set_layout, NULL);
         vkDestroyDescriptorSetLayout(base.device, graphics_set_layout, NULL);
         vkDestroyDescriptorSetLayout(base.device, debug_set_layout, NULL);
+        vkDestroyDescriptorSetLayout(base.device, text_set_layout, NULL);
 
         buffer_destroy(base.device, &scene_staging);
         buffer_destroy(base.device, &compute_buf_reader);
         buffer_destroy(base.device, &compute_out_staging);
         buffer_destroy(base.device, &debug_in_staging);
         buffer_destroy(base.device, &debug_in_buf);
+        buffer_destroy(base.device, &text_staging);
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 buffer_destroy(base.device, &compute_in_bufs[i]);
                 buffer_destroy(base.device, &compute_out_bufs[i]);
                 buffer_destroy(base.device, &graphics_in_bufs[i]);
+                buffer_destroy(base.device, &text_in_bufs[i]);
         }
+
+        image_destroy(base.device, &font_image);
 
         base_destroy(&base);
 
