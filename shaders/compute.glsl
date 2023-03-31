@@ -51,7 +51,7 @@ void compute_impulse(vec3 point, Object a, Object b) {
 	// For deep penetrations, the two might cancel each other out. Oh well, nothing we
 	// can really do.
 	vec3 collision_normal = (-my_normal + other_normal) * 0.5;
-	//vec3 collision_normal = other_normal;
+	//vec3 collision_normal = -my_normal;
 
 	if (length(collision_normal) == 0) return;
 	collision_normal = normalize(collision_normal);
@@ -178,6 +178,9 @@ void main() {
 	float x = gl_GlobalInvocationID.x * 0.0125 - 1 + 0.00625;
 	float y = gl_GlobalInvocationID.y * 0.0125 - 1 + 0.00625;
 	float z = gl_GlobalInvocationID.z * 0.0125 - 1 + 0.00625;
+	x = -1;
+	y = 1;
+	z = -1;
 
 	int a_type = in_buf.objects[0].type, b_type = in_buf.objects[1].type;
 	mat4 a_transform = in_buf.objects[0].transform,

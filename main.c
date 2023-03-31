@@ -23,6 +23,8 @@
 #include "external/render-utils/src/camera.h"
 #include "external/render-utils/src/timer.h"
 
+#include "font.h"
+
 #include <assert.h>
 #include <math.h>
 #include <stdint.h>
@@ -44,6 +46,8 @@ const VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 
 // User can pause and unpause physics sim
 int run_physics = 1;
+// If this is true, physics will run for just one frame and then pause again
+int physics_single_step = 0;
 
 // aligned(16) only aligns the start of the structure, not the members. I don't think it's necessary
 // but gcc complains otherwise.
@@ -145,15 +149,16 @@ void get_init_data(struct Scene *data) {
         bzero(data, sizeof(struct Scene));
         data->count[0] = 2;
         // Cube 1
-        data->objects[0].type[0] = 5;
+        data->objects[0].type[0] = 1;
         data->objects[0].pos[1] = 4;
+        data->objects[0].linear_vel[1] = -0.001;
         glm_mat4_identity(data->objects[0].orientation);
         // data->objects[0].angular_vel[2] = 0.005;
         // data->objects[0].angular_vel[1] = 0.005;
         object_make_transform(&data->objects[0]);
 
         // Cube 2
-        data->objects[1].type[0] = 2;
+        data->objects[1].type[0] = 1;
         glm_mat4_identity(data->objects[1].orientation);
         object_make_transform(&data->objects[1]);
 }
@@ -335,6 +340,11 @@ void physics_key_callback(GLFWwindow *window, int key, int scancode, int action,
                 printf("Toggle\n");
                 run_physics = !run_physics;
         }
+        if (key == GLFW_KEY_V && action == GLFW_PRESS) {
+                printf("Just one frame\n");
+                run_physics = 1;
+                physics_single_step = 1;
+        }
 }
 
 int main() {
@@ -352,6 +362,27 @@ int main() {
         struct Base base;
         base_create(window, VK_API_VERSION_1_3, 1, 1, 0, NULL, DEVICE_EXT_CT, DEVICE_EXTS,
                     &atomic_features, &base);
+
+        // Load font
+        int font_width, font_height;
+        uint8_t *font_bytes;
+        load_font("font.txt", &font_width, &font_height, &font_bytes);
+        for (int i = 0; i < '~' - ' ' + 1; i++) {
+		printf("%c:\n", (char) (i + ' '));
+                for (int j = 0; j < font_height; j++) {
+                        for (int k = 0; k < font_width; k++) {
+                                printf(font_bytes[i * font_width * font_height + j * font_width +
+                                                  k] == 255
+                                               ? "#"
+                                               : ".");
+                        }
+                        printf("\n");
+                }
+		printf("---\n");
+        }
+        free(font_bytes);
+        // struct Image font_image;
+        // image_create(base.phys_dev, base.device, VK_FORMAT_R8_UNORM, VK_IMAGE_TYPE_2D, font_width
 
         // Swapchain
         struct Swapchain swapchain;
@@ -735,7 +766,7 @@ int main() {
 
                 if (run_physics) {
                         // Apply gravity, but only to first object
-                        scene_data->objects[0].linear_vel[1] -= 0.00001;
+                        // scene_data->objects[0].linear_vel[1] -= 0.0001;
 
                         /*
                         // Apply world's simplest drag model
@@ -797,7 +828,7 @@ int main() {
 
                         // Apply impulse
                         int col_count = compute_out_mapped->collision_count;
-                        printf("col count: %u\n", col_count);
+                        //printf("col count: %u\n", col_count);
                         if (col_count > 0) {
                                 col_count = 1;
                                 scene_data->objects[0].linear_vel[0] +=
@@ -827,13 +858,14 @@ int main() {
                                             {omega[2], 0, -omega[0], 0},
                                             {-omega[1], omega[0], 0, 0},
                                             {0, 0, 0, 1}};
+                        glm_mat4_transpose(omega_tilde);
 
                         mat4 derivative;
                         glm_mat4_mul(omega_tilde, scene_data->objects[0].transform, derivative);
 
                         for (int i = 0; i < 3; i++) {
                                 for (int j = 0; j < 3; j++) {
-                                        scene_data->objects[0].orientation[i][j] -=
+                                        scene_data->objects[0].orientation[i][j] +=
                                                 derivative[i][j];
                                 }
                         }
@@ -844,6 +876,12 @@ int main() {
                         // Generate all transform matrices from position and orientation
                         for (int i = 0; i < scene_data->count[0]; i++) {
                                 object_make_transform(&scene_data->objects[0]);
+                        }
+
+                        // Maybe pause physics again
+                        if (physics_single_step) {
+                                run_physics = 0;
+                                physics_single_step = 0;
                         }
                 }
 
