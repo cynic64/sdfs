@@ -24,16 +24,7 @@ layout (std140, binding = 1) buffer ComputeOut {
 	vec3 linear_impulse;
 	vec3 angular_impulse;
 	uint collision_count;
-
-	// Idk where else to put this. Surely there is a better way to set some value to 0 before
-	// all invocations run?
-	uint debug_out_idx;
 } out_buf;
-
-layout (std140, binding = 2) buffer DebugIn {
-	vec3 line_poss[DEBUG_MAX_LINES];
-	vec3 line_dirs[DEBUG_MAX_LINES];
-} debug_buf;
 
 layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
@@ -164,13 +155,6 @@ void compute_impulse(vec3 point, Object a, Object b) {
 
 	// All the atomic adds seem like they should be really slow, but somehow aren't.
 	//atomicAdd(out_buf.collision_count, 1);
-
-	// Add a line to debug view, as long as there is space
-	uint idx = atomicAdd(out_buf.debug_out_idx, 1);
-	if (idx < DEBUG_MAX_LINES) {
-		debug_buf.line_poss[idx] = point;
-		debug_buf.line_dirs[idx] = vec3(collision_normal);
-	}
 }
 
 void main() {
