@@ -93,7 +93,10 @@ struct __attribute__((packed, aligned(16))) ComputeOut {
         vec4 linear_impulse; // vec3
 
         // Instantaneous change in angular velocity
-        vec3 angular_impulse;
+        vec4 angular_impulse; // vec3
+
+        // Where collision happened
+        vec3 collision_pos;
 
         uint32_t collision_count;
 };
@@ -1140,6 +1143,10 @@ int main() {
                         collision_count = compute_out.collision_count;
                         // printf("col count: %u\n", collision_count);
                         if (collision_count > 0) {
+                                printf("%d collisions\n", collision_count);
+                                printf("Collided at: %5.2f %5.2f %5.2f\n",
+                                       compute_out.collision_pos[0], compute_out.collision_pos[1],
+                                       compute_out.collision_pos[2]);
                                 scene_data->objects[0].linear_vel[0] +=
                                         compute_out.linear_impulse[0] / 1;
                                 scene_data->objects[0].linear_vel[1] +=

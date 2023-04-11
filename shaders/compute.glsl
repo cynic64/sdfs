@@ -23,6 +23,7 @@ layout (std140, binding = 1) buffer ComputeOut {
 	vec3 torque;
 	vec3 linear_impulse;
 	vec3 angular_impulse;
+	vec3 collision_pos;
 	uint collision_count;
 } out_buf;
 
@@ -54,11 +55,6 @@ void compute_impulse(vec3 point, Object a, Object b) {
 	// Vector from COM to point
 	vec3 a_from_com = point - a_com;
 	vec3 b_from_com = point - b_com;
-
-	// Cross of force and vector to COM, which is the force's contribution to torque or
-	// something
-	// man this hurts my brain
-	//vec3 torque = cross(r, force);
 
 	// 1 = perfectly elastic, 0 = all momentum absorbed on collision
 	float restitution = 1;
@@ -153,6 +149,9 @@ void compute_impulse(vec3 point, Object a, Object b) {
 	atomicAdd(out_buf.angular_impulse.y, angular_impulse.y);
 	atomicAdd(out_buf.angular_impulse.z, angular_impulse.z);
 
+	// Record where collision happened
+	out_buf.collision_pos = point;
+
 	// All the atomic adds seem like they should be really slow, but somehow aren't.
 	//atomicAdd(out_buf.collision_count, 1);
 }
@@ -162,9 +161,6 @@ void main() {
 	float x = gl_GlobalInvocationID.x * 0.0125 - 1 + 0.00625;
 	float y = gl_GlobalInvocationID.y * 0.0125 - 1 + 0.00625;
 	float z = gl_GlobalInvocationID.z * 0.0125 - 1 + 0.00625;
-	x = -1;
-	y = 1;
-	z = -1;
 
 	int a_type = in_buf.objects[0].type, b_type = in_buf.objects[1].type;
 	mat4 a_transform = in_buf.objects[0].transform,
@@ -175,7 +171,11 @@ void main() {
 	float dist1 = scene_sdf(b_type, b_transform, point);
 
 	float thresh = length(vec3(0.0125));
-	if (dist0 <= thresh && dist1 <= thresh && atomicAdd(out_buf.collision_count, 1) == 0) {
-		compute_impulse(point, in_buf.objects[0], in_buf.objects[1]);
+	bool collision = dist0 <= thresh && dist1 <= thresh;
+	if (collision) {
+		// Only compute impulse for one point
+		if (atomicAdd(out_buf.collision_count, 1) == 0) {
+			compute_impulse(point, in_buf.objects[0], in_buf.objects[1]);
+		}
 	}
 }

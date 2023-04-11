@@ -34,4 +34,5 @@ void main() {
 	out_buf.a_com = (a.transform * vec4(0, 0, 0, 1)).xyz;
 	out_buf.b_com = (b.transform * vec4(0, 0, 0, 1)).xyz;
 
+	// Object's corners
 }

@@ -8,11 +8,11 @@ OUT_DIR = 'shaders_processed/'
 
 for shader in os.listdir(SHADER_DIR):
         if not shader.endswith('.glsl'):
-                print('Skipping', shader)
-                print()
+                #print('Skipping', shader)
+                #print()
                 continue
 
-        print('Processing', shader)
+        #print('Processing', shader)
 
         # Replace all #includes
         text = open(SHADER_DIR + shader, 'r').read().split('\n')
@@ -21,7 +21,7 @@ for shader in os.listdir(SHADER_DIR):
         for i, line in enumerate(text):
                 if line.startswith('#include'):
                         included_path = INCLUDE_DIR + line[len('#include '):]
-                        print(f'Replacing {line} on line {i} with {included_path}')
+                        #print(f'Replacing {line} on line {i} with {included_path}')
                         lines_out.append(open(included_path, 'r').read())
                 else:
                         lines_out.append(line)
@@ -39,4 +39,4 @@ for shader in os.listdir(SHADER_DIR):
         print(command)
         os.system(command)
 
-        print()
+        #print()
