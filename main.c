@@ -101,7 +101,8 @@ struct __attribute__((packed, aligned(16))) ComputeOut {
 // I need to be able to see what's going on when my compute shader inevitably breaks. This is what
 // `compute_debug.glsl` outputs.
 struct __attribute__((packed, aligned(16))) ComputeDebugOut {
-        int idk;
+        vec4 a_com; // vec3
+        vec4 b_com; // vec3
 };
 
 // Gets passed to debug pass. Yes, I know I could have just used a vertex buffer, but this is more
@@ -1371,7 +1372,10 @@ int main() {
                                         struct ComputeDebugOut debug_out;
                                         physics_debug_calc(base.device, base.queue, &physics_debug,
                                                            scene_staging.handle, &debug_out);
-                                        printf("Result: %d\n", debug_out.idk);
+                                        printf("A's COM: %5.2f %5.2f %5.2f\n", debug_out.a_com[0],
+                                               debug_out.a_com[1], debug_out.a_com[2]);
+                                        printf("B's COM: %5.2f %5.2f %5.2f\n", debug_out.b_com[0],
+                                               debug_out.b_com[1], debug_out.b_com[2]);
                                 } else {
                                         printf("Don't know what %c is\n", command);
                                 }

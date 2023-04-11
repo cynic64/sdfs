@@ -19,7 +19,8 @@ layout (std140, binding = 0) buffer readonly Scene {
 } in_buf;
 
 layout (std140, binding = 1) buffer DebugOut {
-	int idk;
+	vec3 a_com;
+	vec3 b_com;
 } out_buf;
 
 layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
@@ -27,5 +28,10 @@ layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 #include common.glsl
 
 void main() {
-	out_buf.idk = 99;
+	Object a = in_buf.objects[0], b = in_buf.objects[1];
+
+	// Objects' center of mass
+	out_buf.a_com = (a.transform * vec4(0, 0, 0, 1)).xyz;
+	out_buf.b_com = (b.transform * vec4(0, 0, 0, 1)).xyz;
+
 }
