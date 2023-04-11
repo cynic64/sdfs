@@ -98,6 +98,12 @@ struct __attribute__((packed, aligned(16))) ComputeOut {
         uint32_t collision_count;
 };
 
+// I need to be able to see what's going on when my compute shader inevitably breaks. This is what
+// `compute_debug.glsl` outputs.
+struct __attribute__((packed, aligned(16))) ComputeDebugOut {
+        int idk;
+};
+
 // Gets passed to debug pass. Yes, I know I could have just used a vertex buffer, but this is more
 // flexible if I want to include more stuff later. It's a debug layer, performance is less
 // important.
@@ -124,10 +130,16 @@ struct SyncSet {
         VkSemaphore render_sem;
 };
 
+// Maybe the debug stuff should go in its own struct? All they share is the input buffer and set
+// layout. Ah, whatever.
 struct PhysicsEngine {
         VkCommandBuffer cbufs[CONCURRENT_FRAMES];
         VkPipelineLayout pipe_layout;
         VkPipeline pipe;
+
+        // I think it's totally uncessary to have 1 of these for each CONCURRENT_FRAME since I
+        // always wait for the shader to finish before continuing. But whatever, it'll be useful
+        // soon™.
         VkFence fences[CONCURRENT_FRAMES];
         struct Buffer in_bufs[CONCURRENT_FRAMES];
         struct Buffer out_bufs[CONCURRENT_FRAMES];
@@ -135,7 +147,22 @@ struct PhysicsEngine {
         // Used to reset output before running shader
         struct Buffer reset;
         VkDescriptorSet sets[CONCURRENT_FRAMES];
-	VkDescriptorSetLayout set_layout;
+        VkDescriptorSetLayout set_layout;
+};
+
+// Runs a compute shader that has access to all the same functions as the physics one. Lets me debug
+// stuff GPU-side. It can only be run in the paused debug mode so we don't need one item for each
+// CONCURRENT_FRAME.
+struct PhysicsDebug {
+        VkCommandBuffer cbuf;
+        VkPipelineLayout pipe_layout;
+        VkPipeline pipe;
+        VkFence fence;
+        struct Buffer in_buf;
+        struct Buffer out_buf;
+        struct Buffer reader;
+        VkDescriptorSet set;
+        VkDescriptorSetLayout set_layout;
 };
 
 void sync_set_create(VkDevice device, struct SyncSet *sync_set) {
@@ -367,7 +394,7 @@ void physics_create(struct Base *base, VkDescriptorPool dpool, struct PhysicsEng
                 cbuf_alloc(base->device, base->cpool, &physics->cbufs[i]);
         }
 
-        // Shaders
+        // Shader
         VkShaderModule shader;
         VkPipelineShaderStageCreateInfo shader_info = {0};
         load_shader(base->device, "shaders_processed/compute.spv", &shader,
@@ -405,6 +432,7 @@ void physics_create(struct Base *base, VkDescriptorPool dpool, struct PhysicsEng
         buffer_create(base->phys_dev, base->device, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                       sizeof(struct ComputeOut), &physics->reader);
+
         // Descriptor shenanigans
         struct DescriptorInfo in_desc = {0};
         in_desc.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -435,7 +463,7 @@ void physics_create(struct Base *base, VkDescriptorPool dpool, struct PhysicsEng
                            &physics->sets[i]);
         }
 
-        // Compute pipeline
+        // Pipeline
         // Layout
         VkPipelineLayoutCreateInfo pipe_layout_info = {0};
         pipe_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -462,9 +490,9 @@ void physics_create(struct Base *base, VkDescriptorPool dpool, struct PhysicsEng
 // should be a VkBuffer of `struct Scene`, which will be copied to compute shader input. Debug lines
 // will be written into `debug`.
 void physics_calc(VkDevice device, VkQueue queue, struct PhysicsEngine *physics, int idx,
-                  VkBuffer in, struct ComputeOut *out) {
+                  VkBuffer scene, struct ComputeOut *out) {
         // Copy latest data to compute shader input
-        buffer_copy(queue, physics->cbufs[idx], in, physics->in_bufs[idx].handle,
+        buffer_copy(queue, physics->cbufs[idx], scene, physics->in_bufs[idx].handle,
                     sizeof(struct Scene));
 
         // Also reset compute buffer's output
@@ -507,16 +535,150 @@ void physics_calc(VkDevice device, VkQueue queue, struct PhysicsEngine *physics,
 
 void physics_destroy(VkDevice device, struct PhysicsEngine *physics) {
         vkDestroyPipeline(device, physics->pipe, NULL);
+
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 vkDestroyFence(device, physics->fences[i], NULL);
                 buffer_destroy(device, &physics->in_bufs[i]);
                 buffer_destroy(device, &physics->out_bufs[i]);
         }
+
         buffer_destroy(device, &physics->reader);
         buffer_destroy(device, &physics->reset);
 
         vkDestroyPipelineLayout(device, physics->pipe_layout, NULL);
         vkDestroyDescriptorSetLayout(device, physics->set_layout, NULL);
+}
+
+void physics_debug_create(struct Base *base, VkDescriptorPool dpool, struct PhysicsDebug *debug) {
+        bzero(debug, sizeof(*debug));
+
+        // Fence
+        fence_create(base->device, 0, &debug->fence);
+
+        // Command buffer
+        cbuf_alloc(base->device, base->cpool, &debug->cbuf);
+
+        // Shader
+        VkShaderModule shader;
+        VkPipelineShaderStageCreateInfo shader_info = {0};
+        load_shader(base->device, "shaders_processed/compute_debug.spv", &shader,
+                    VK_SHADER_STAGE_COMPUTE_BIT, &shader_info);
+
+        // Buffers
+        // Input
+        buffer_create(base->phys_dev, base->device,
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct Scene), &debug->in_buf);
+
+        // Output
+        buffer_create(base->phys_dev, base->device,
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(struct ComputeDebugOut),
+                      &debug->out_buf);
+
+        // Reader
+        buffer_create(base->phys_dev, base->device,
+                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                      sizeof(struct ComputeDebugOut), &debug->reader);
+
+        // Descriptor shenanigans
+        struct DescriptorInfo in_desc = {0};
+        in_desc.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        in_desc.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        struct DescriptorInfo out_desc = {0};
+        out_desc.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        out_desc.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+
+        struct DescriptorInfo descs[] = {in_desc, out_desc};
+        struct SetInfo set_info = {0};
+        set_info.desc_ct = sizeof(descs) / sizeof(descs[0]);
+        set_info.descs = descs;
+
+        set_layout_create(base->device, &set_info, &debug->set_layout);
+
+        // Actual set
+        union SetHandle buffers[2] = {0};
+        buffers[0].buffer.buffer = debug->in_buf.handle;
+        buffers[0].buffer.range = sizeof(struct Scene);
+        buffers[1].buffer.buffer = debug->out_buf.handle;
+        buffers[1].buffer.range = sizeof(struct ComputeDebugOut);
+        assert(sizeof(buffers) / sizeof(buffers[0]) == set_info.desc_ct);
+
+        set_create(base->device, dpool, debug->set_layout, &set_info, buffers, &debug->set);
+
+        // Pipeline
+        // Layout
+        VkPipelineLayoutCreateInfo pipe_layout_info = {0};
+        pipe_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipe_layout_info.setLayoutCount = 1;
+        pipe_layout_info.pSetLayouts = &debug->set_layout;
+
+        VkResult res =
+                vkCreatePipelineLayout(base->device, &pipe_layout_info, NULL, &debug->pipe_layout);
+        assert(res == VK_SUCCESS);
+
+        // Actual pipeline
+        VkComputePipelineCreateInfo pipe_info = {0};
+        pipe_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        pipe_info.layout = debug->pipe_layout;
+        pipe_info.stage = shader_info;
+
+        res = vkCreateComputePipelines(base->device, NULL, 1, &pipe_info, NULL, &debug->pipe);
+        assert(res == VK_SUCCESS);
+
+        vkDestroyShaderModule(base->device, shader, NULL);
+}
+
+// For when it all goes horribly wrong, which is most of the time.
+void physics_debug_calc(VkDevice device, VkQueue queue, struct PhysicsDebug *debug, VkBuffer scene,
+                        struct ComputeDebugOut *out) {
+        // Copy latest data to compute shader input
+        buffer_copy(queue, debug->cbuf, scene, debug->in_buf.handle, sizeof(struct Scene));
+
+        // Record compute dispatch
+        vkResetCommandBuffer(debug->cbuf, 0);
+        cbuf_begin_onetime(debug->cbuf);
+        vkCmdBindPipeline(debug->cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, debug->pipe);
+        vkCmdBindDescriptorSets(debug->cbuf, VK_PIPELINE_BIND_POINT_COMPUTE, debug->pipe_layout, 0,
+                                1, &debug->set, 0, NULL);
+        vkCmdDispatch(debug->cbuf, 1, 1, 1);
+        VkResult res = vkEndCommandBuffer(debug->cbuf);
+        assert(res == VK_SUCCESS);
+
+        VkSubmitInfo compute_submit_info = {0};
+        compute_submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        compute_submit_info.commandBufferCount = 1;
+        compute_submit_info.pCommandBuffers = &debug->cbuf;
+
+        res = vkQueueSubmit(queue, 1, &compute_submit_info, debug->fence);
+        assert(res == VK_SUCCESS);
+
+        // Wait for compute to finish. This seems really wasteful.
+        res = vkWaitForFences(device, 1, &debug->fence, VK_TRUE, UINT64_MAX);
+        assert(res == VK_SUCCESS);
+        res = vkResetFences(device, 1, &debug->fence);
+        assert(res == VK_SUCCESS);
+
+        // Copy what the compute shader outputted to *out
+        struct ComputeDebugOut *mapped;
+        static_assert(sizeof(*mapped) == sizeof(*out), "`out` and `mapped` must have same size!");
+        buffer_copy(queue, debug->cbuf, debug->out_buf.handle, debug->reader.handle,
+                    sizeof(*mapped));
+        vkMapMemory(device, debug->reader.mem, 0, sizeof(*mapped), 0, (void **)&mapped);
+        memcpy(out, mapped, sizeof(*mapped));
+        vkUnmapMemory(device, debug->reader.mem);
+}
+
+void physics_debug_destroy(VkDevice device, struct PhysicsDebug *debug) {
+        vkDestroyPipelineLayout(device, debug->pipe_layout, NULL);
+        vkDestroyPipeline(device, debug->pipe, NULL);
+        vkDestroyFence(device, debug->fence, NULL);
+        buffer_destroy(device, &debug->in_buf);
+        buffer_destroy(device, &debug->out_buf);
+        buffer_destroy(device, &debug->reader);
+        vkDestroyDescriptorSetLayout(device, debug->set_layout, NULL);
 }
 
 int main() {
@@ -717,17 +879,17 @@ int main() {
         // Gotta be honest I have no idea what I'm doing here
         VkDescriptorPoolSize dpool_sizes[1] = {0};
         dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        // I think it has to be 6 for each CONCURRENT_FRAME because there's the 2 descriptors for
+        // I think it has to be 6 for each CONCURRENT_FRAME because there's the 4 descriptors for
         // the compute stage, 1 for the graphics stage, 1 for debug and 2 for text
-        dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES * 2;
+        dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES * 6;
 
         VkDescriptorPoolCreateInfo dpool_info = {0};
         dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
         dpool_info.pPoolSizes = dpool_sizes;
-        // Need 4 sets per CONCURRENT_FRAME because there's 1 for compute, 1 for graphics, 1 for
+        // Need 5 sets per CONCURRENT_FRAME because there's 2 for compute, 1 for graphics, 1 for
         // debug and 1 for text.
-        dpool_info.maxSets = 4 * CONCURRENT_FRAMES;
+        dpool_info.maxSets = 5 * CONCURRENT_FRAMES;
 
         VkDescriptorPool dpool;
         res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
@@ -902,8 +1064,11 @@ int main() {
         }
 
         // Physics
-        struct PhysicsEngine physics;
+        struct PhysicsEngine physics = {0};
         physics_create(&base, dpool, &physics);
+
+        struct PhysicsDebug physics_debug = {0};
+        physics_debug_create(&base, dpool, &physics_debug);
 
         // Camera
         struct CameraFly camera;
@@ -1184,6 +1349,7 @@ int main() {
                         printf("c: continue rendering\n");
                         printf("P: toggle physics\n");
                         printf("n: step to next frame\n");
+                        printf("d: debug stuff\n");
 
                         while (1) {
                                 char command;
@@ -1201,6 +1367,11 @@ int main() {
                                 } else if (command == 'P') {
                                         run_physics = !run_physics;
                                         printf("Run physics: %d\n", run_physics);
+                                } else if (command == 'd') {
+                                        struct ComputeDebugOut debug_out;
+                                        physics_debug_calc(base.device, base.queue, &physics_debug,
+                                                           scene_staging.handle, &debug_out);
+                                        printf("Result: %d\n", debug_out.idk);
                                 } else {
                                         printf("Don't know what %c is\n", command);
                                 }
