@@ -1388,6 +1388,7 @@ int main() {
         vkDeviceWaitIdle(base.device);
 
         physics_destroy(base.device, &physics);
+        physics_debug_destroy(base.device, &physics_debug);
 
         vkDestroySampler(base.device, font_sampler, 0);
 
