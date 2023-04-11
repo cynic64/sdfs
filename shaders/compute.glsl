@@ -32,8 +32,8 @@ layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 
 void compute_impulse(vec3 point, Object a, Object b) {
 	float normal_detail = 0.0002;
-	vec3 my_normal = calc_normal(a.type, a.transform, point, normal_detail);
-	vec3 other_normal = calc_normal(b.type, b.transform, point, normal_detail);
+	vec3 a_normal = calc_normal(a.type, a.transform, point, normal_detail);
+	vec3 b_normal = calc_normal(b.type, b.transform, point, normal_detail);
 
 	// If there's a collision, write the average of (the opposite of our normal) and
 	// (the other normal). Those should both point roughly in the right direction to
@@ -41,8 +41,8 @@ void compute_impulse(vec3 point, Object a, Object b) {
 
 	// For deep penetrations, the two might cancel each other out. Oh well, nothing we
 	// can really do.
-	vec3 collision_normal = (-my_normal + other_normal) * 0.5;
-	//vec3 collision_normal = -my_normal;
+	vec3 collision_normal = (-a_normal + b_normal) * 0.5;
+	//vec3 collision_normal = -a_normal;
 
 	if (length(collision_normal) == 0) return;
 	collision_normal = normalize(collision_normal);
