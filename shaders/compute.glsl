@@ -35,7 +35,7 @@ layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 #include common.glsl
 
 void compute_impulse(vec3 point, Object a, Object b) {
-	float normal_detail = 0.0002;
+	float normal_detail = 0.00002;
 	vec3 a_normal = calc_normal(a.type, a.transform, point, normal_detail);
 	vec3 b_normal = calc_normal(b.type, b.transform, point, normal_detail);
 

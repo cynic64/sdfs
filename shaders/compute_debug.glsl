@@ -21,6 +21,10 @@ layout (std140, binding = 0) buffer readonly Scene {
 layout (std140, binding = 1) buffer DebugOut {
 	vec3 a_com;
 	vec3 b_com;
+	vec3 a_linear_vel;
+	vec3 b_linear_vel;
+	vec3 a_angular_vel;
+	vec3 b_angular_vel;
 } out_buf;
 
 layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
@@ -33,6 +37,12 @@ void main() {
 	// Objects' center of mass
 	out_buf.a_com = (a.transform * vec4(0, 0, 0, 1)).xyz;
 	out_buf.b_com = (b.transform * vec4(0, 0, 0, 1)).xyz;
+
+	// Objects' velocities
+	out_buf.a_linear_vel = a.linear_vel;
+	out_buf.b_linear_vel = b.linear_vel;
+	out_buf.a_angular_vel = a.angular_vel;
+	out_buf.b_angular_vel = b.angular_vel;
 
 	// Object's corners
 }
