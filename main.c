@@ -95,10 +95,10 @@ struct __attribute__((packed, aligned(16))) ComputeOut {
         // Instantaneous change in angular velocity
         vec4 angular_impulse; // vec3
 
-        // Where collision happened
+        // Debug stuff
         vec3 collision_pos;
-
         uint32_t collision_count;
+        vec4 collision_normal; // vec3
 };
 
 // I need to be able to see what's going on when my compute shader inevitably breaks. This is what
@@ -206,7 +206,7 @@ void get_init_data(struct Scene *data) {
         // Cube 1
         data->objects[0].type[0] = 1;
         data->objects[0].pos[1] = 4;
-        data->objects[0].linear_vel[1] = -0.001;
+        data->objects[0].linear_vel[1] = -0.005;
         glm_mat4_identity(data->objects[0].orientation);
         // data->objects[0].angular_vel[2] = 0.005;
         // data->objects[0].angular_vel[1] = 0.005;
@@ -1146,6 +1146,10 @@ int main() {
                                 printf("Collided at: %5.2f %5.2f %5.2f\n",
                                        compute_out.collision_pos[0], compute_out.collision_pos[1],
                                        compute_out.collision_pos[2]);
+                                printf("with normal %5.2f %5.2f %5.2f\n",
+                                       compute_out.collision_normal[0],
+                                       compute_out.collision_normal[1],
+                                       compute_out.collision_normal[2]);
                                 scene_data->objects[0].linear_vel[0] +=
                                         compute_out.linear_impulse[0] / 1;
                                 scene_data->objects[0].linear_vel[1] +=
@@ -1167,6 +1171,7 @@ int main() {
                         scene_data->objects[0].pos[2] += scene_data->objects[0].linear_vel[2];
 
                         // Apply angular velocity
+                        /*
                         vec3 omega;
                         memcpy(omega, scene_data->objects[0].angular_vel, sizeof(vec3));
                         mat4 omega_tilde = {{0, -omega[2], omega[1], 0},
@@ -1184,6 +1189,7 @@ int main() {
                                                 derivative[i][j];
                                 }
                         }
+                        */
 
                         reorthogonalize(scene_data->objects[0].orientation,
                                         scene_data->objects[0].orientation);

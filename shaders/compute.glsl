@@ -23,8 +23,11 @@ layout (std140, binding = 1) buffer ComputeOut {
 	vec3 torque;
 	vec3 linear_impulse;
 	vec3 angular_impulse;
+
+	// This is for debugging
 	vec3 collision_pos;
 	uint collision_count;
+	vec3 collision_normal;
 } out_buf;
 
 layout (local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
@@ -98,6 +101,7 @@ void compute_impulse(vec3 point, Object a, Object b) {
 		    dot(n, n) * (1.0 / a_mass + 1.0 / b_mass)
 		    // If we weren't bothering with angular effects, we would be done. But we
 		    // do care about angular stuff, so here we go:
+		    /*
 		    +
 		    dot
 		    (
@@ -121,6 +125,7 @@ void compute_impulse(vec3 point, Object a, Object b) {
 		    // And now we dot the whole thing with n, I dunno why...
 		    , n
 		    )
+		    */
 		    );
 	// Phew...
 
@@ -145,12 +150,15 @@ void compute_impulse(vec3 point, Object a, Object b) {
 	// matter because it's encoded in the inertia tensor.
 	vec3 angular_impulse = a_inertia_inverse
 		* cross(a_from_com, collision_normal * impulse);
+	/*
 	atomicAdd(out_buf.angular_impulse.x, angular_impulse.x);
 	atomicAdd(out_buf.angular_impulse.y, angular_impulse.y);
 	atomicAdd(out_buf.angular_impulse.z, angular_impulse.z);
+	*/
 
 	// Record where collision happened
 	out_buf.collision_pos = point;
+	out_buf.collision_normal = collision_normal;
 
 	// All the atomic adds seem like they should be really slow, but somehow aren't.
 	//atomicAdd(out_buf.collision_count, 1);
