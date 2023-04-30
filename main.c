@@ -491,8 +491,7 @@ void physics_create(struct Base *base, VkDescriptorPool dpool, struct PhysicsEng
 }
 
 // `idx` should be frame_ct % CONCURRENT_FRAMES, just like all the other per-frame resources. `in`
-// should be a VkBuffer of `struct Scene`, which will be copied to compute shader input. Debug lines
-// will be written into `debug`.
+// should be a VkBuffer of `struct Scene`, which will be copied to compute shader input.
 void physics_calc(VkDevice device, VkQueue queue, struct PhysicsEngine *physics, int idx,
                   VkBuffer scene, struct ComputeOut *out) {
         // Copy latest data to compute shader input
@@ -1196,6 +1195,10 @@ int main() {
                 }
 
                 //////// end physics
+
+                // Reset debug buffer
+                buffer_copy(base.queue, copy_cbuf, debug_in_staging.handle, debug_in_buf.handle,
+                            sizeof(struct Debug));
 
                 // Acquire an image
                 uint32_t image_idx;
