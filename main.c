@@ -86,8 +86,26 @@ struct __attribute__((packed, aligned(16))) Scene {
 // When the `compute.glsl` calculates the impulse for a collision, intermediate values get stored
 // here so I can see what's going on (or going wrong...)
 struct __attribute__((packed)) CollisionDebug {
-	vec4 pos; // vec3
-	vec4 normal; // vec3
+        // `compute.glsl` has a description of all of these
+        vec4 pos;           // vec3
+        vec4 a_linear_vel;  // vec3
+        vec4 b_linear_vel;  // vec3
+        vec4 a_angular_vel; // vec3
+        vec4 b_angular_vel; // vec3
+        vec4 a_normal;      // vec3
+        vec4 b_normal;      // vec3
+        vec3 collision_normal;
+        uint32_t return_early;
+        vec4 a_com;      // vec3
+        vec4 b_com;      // vec3
+        vec4 a_from_com; // vec3
+        vec4 b_from_com; // vec3
+        vec4 a_vel;      // vec3
+        vec4 b_vel;      // vec3
+        vec3 rel_vel;
+        float impulse;
+        vec4 linear_impulse;  // vec3
+        vec4 angular_impulse; // vec3
 };
 
 struct __attribute__((packed, aligned(16))) ComputeOut {
@@ -102,10 +120,10 @@ struct __attribute__((packed, aligned(16))) ComputeOut {
         // Instantaneous change in angular velocity
         vec3 angular_impulse;
 
-	// Total collisions - we only compute impulse for one
+        // Total collisions - we only compute impulse for one
         uint32_t collision_count;
 
-	struct CollisionDebug debug;
+        struct CollisionDebug debug;
 };
 
 // I need to be able to see what's going on when my compute shader inevitably breaks. This is what
@@ -188,6 +206,45 @@ void sync_set_destroy(VkDevice device, struct SyncSet *sync_set) {
         vkDestroyFence(device, sync_set->render_fence, NULL);
         vkDestroySemaphore(device, sync_set->acquire_sem, NULL);
         vkDestroySemaphore(device, sync_set->render_sem, NULL);
+}
+
+void print_collision_info(struct CollisionDebug *debug) {
+        printf("return early:     %u\n", debug->return_early);
+        printf("pos:              %10.6f %10.6f %10.6f\n", debug->pos[0], debug->pos[1],
+               debug->pos[2]);
+        printf("a_linear_vel:     %10.6f %10.6f %10.6f\n", debug->a_linear_vel[0],
+               debug->a_linear_vel[1], debug->a_linear_vel[2]);
+        printf("b_linear_vel:     %10.6f %10.6f %10.6f\n", debug->b_linear_vel[0],
+               debug->b_linear_vel[1], debug->b_linear_vel[2]);
+        printf("a_angular_vel:    %10.6f %10.6f %10.6f\n", debug->a_angular_vel[0],
+               debug->a_angular_vel[1], debug->a_angular_vel[2]);
+        printf("b_angular_vel:    %10.6f %10.6f %10.6f\n", debug->b_angular_vel[0],
+               debug->b_angular_vel[1], debug->b_angular_vel[2]);
+        printf("a_normal:         %10.6f %10.6f %10.6f\n", debug->a_normal[0], debug->a_normal[1],
+               debug->a_normal[2]);
+        printf("b_normal:         %10.6f %10.6f %10.6f\n", debug->b_normal[0], debug->b_normal[1],
+               debug->b_normal[2]);
+        printf("collision_normal: %10.6f %10.6f %10.6f\n", debug->collision_normal[0],
+               debug->collision_normal[1], debug->collision_normal[2]);
+        printf("a_com:            %10.6f %10.6f %10.6f\n", debug->a_com[0], debug->a_com[1],
+               debug->a_com[2]);
+        printf("b_com:            %10.6f %10.6f %10.6f\n", debug->b_com[0], debug->b_com[1],
+               debug->b_com[2]);
+        printf("a_from_com:       %10.6f %10.6f %10.6f\n", debug->a_from_com[0],
+               debug->a_from_com[1], debug->a_from_com[2]);
+        printf("b_from_com:       %10.6f %10.6f %10.6f\n", debug->b_from_com[0],
+               debug->b_from_com[1], debug->b_from_com[2]);
+        printf("a_vel:            %10.6f %10.6f %10.6f\n", debug->a_vel[0], debug->a_vel[1],
+               debug->a_vel[2]);
+        printf("b_vel:            %10.6f %10.6f %10.6f\n", debug->b_vel[0], debug->b_vel[1],
+               debug->b_vel[2]);
+        printf("rel_vel:          %10.6f %10.6f %10.6f\n", debug->rel_vel[0], debug->rel_vel[1],
+               debug->rel_vel[2]);
+        printf("Impulse:          %10.5f\n", debug->impulse);
+        printf("linear_impulse:   %10.6f %10.6f %10.6f\n", debug->linear_impulse[0],
+               debug->linear_impulse[1], debug->linear_impulse[2]);
+        printf("angular_impulse:  %10.6f %10.6f %10.6f\n", debug->angular_impulse[0],
+               debug->angular_impulse[1], debug->angular_impulse[2]);
 }
 
 // `src` must be null-terminated
@@ -1151,14 +1208,8 @@ int main() {
                         collision_count = compute_out.collision_count;
                         // printf("col count: %u\n", collision_count);
                         if (collision_count > 0) {
+                                print_collision_info(&compute_out.debug);
                                 printf("%d collisions\n", collision_count);
-                                printf("Collided at: %5.2f %5.2f %5.2f\n",
-                                       compute_out.debug.pos[0], compute_out.debug.pos[1],
-                                       compute_out.debug.pos[2]);
-                                printf("with normal %5.2f %5.2f %5.2f\n",
-                                       compute_out.debug.normal[0],
-                                       compute_out.debug.normal[1],
-                                       compute_out.debug.normal[2]);
                                 scene_data->objects[0].linear_vel[0] +=
                                         compute_out.linear_impulse[0] / 1;
                                 scene_data->objects[0].linear_vel[1] +=

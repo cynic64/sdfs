@@ -20,8 +20,37 @@ layout (std140, binding = 0) buffer readonly Scene {
 
 // Gives us more info on CPU about how the collision was calculated
 struct CollisionDebug {
+	// Where the collision happened
 	vec3 pos;
-	vec3 normal;
+	// Object velocities
+	vec3 a_linear_vel;
+	vec3 b_linear_vel;
+	vec3 a_angular_vel;
+	vec3 b_angular_vel;
+	// Object normals
+	vec3 a_normal;
+	vec3 b_normal;
+	// Ideally, the two normals would be exactly opposite. Since we can only approximate normals,
+	// however, we have to take the average of -a_normal and b_normal. That's what this is.
+	vec3 collision_normal;
+	// If a_normal and b_normal cancel each other out exactly, we return early.
+	uint return_early;
+	// Object center of masses
+	vec3 a_com;
+	vec3 b_com;
+	// Vectors from each object's COM to the point of collision
+	vec3 a_from_com;
+	vec3 b_from_com;
+	// Velocity of each object (linear + angular) at the point of collision
+	vec3 a_vel;
+	vec3 b_vel;
+	// Relative velocity between A and B at collision point
+	vec3 rel_vel;
+
+	float impulse;
+	// The effect the collision will have on A's linear/angular velocity
+	vec3 linear_impulse;
+	vec3 angular_impulse;
 };
 
 layout (std140, binding = 1) buffer ComputeOut {
@@ -52,7 +81,10 @@ void compute_impulse(vec3 point, Object a, Object b) {
 	vec3 collision_normal = (-a_normal + b_normal) * 0.5;
 	//vec3 collision_normal = -a_normal;
 
-	if (length(collision_normal) == 0) return;
+	if (length(collision_normal) == 0) {
+		out_buf.debug.return_early = 1;
+		return;
+	}
 	collision_normal = normalize(collision_normal);
 
 	// Objects' center of mass
@@ -154,13 +186,31 @@ void compute_impulse(vec3 point, Object a, Object b) {
 	// matter because it's encoded in the inertia tensor.
 	vec3 angular_impulse = a_inertia_inverse
 		* cross(a_from_com, collision_normal * impulse);
+	/*
 	atomicAdd(out_buf.angular_impulse.x, angular_impulse.x);
 	atomicAdd(out_buf.angular_impulse.y, angular_impulse.y);
 	atomicAdd(out_buf.angular_impulse.z, angular_impulse.z);
+	*/
 
-	// Record where collision happened
+	// Record debug info
 	out_buf.debug.pos = point;
-	out_buf.debug.normal = collision_normal;
+	out_buf.debug.a_linear_vel = a.linear_vel;
+	out_buf.debug.b_linear_vel = b.linear_vel;
+	out_buf.debug.a_angular_vel = a.angular_vel;
+	out_buf.debug.b_angular_vel = b.angular_vel;
+	out_buf.debug.a_normal = a_normal;
+	out_buf.debug.b_normal = b_normal;
+	out_buf.debug.collision_normal = collision_normal;
+	out_buf.debug.a_com = a_com;
+	out_buf.debug.b_com = b_com;
+	out_buf.debug.a_from_com = a_from_com;
+	out_buf.debug.b_from_com = b_from_com;
+	out_buf.debug.a_vel = a_vel;
+	out_buf.debug.b_vel = b_vel;
+	out_buf.debug.rel_vel = rel_vel;
+	out_buf.debug.impulse = impulse;
+	out_buf.debug.linear_impulse = linear_impulse;
+	out_buf.debug.angular_impulse = angular_impulse;
 
 	// All the atomic adds seem like they should be really slow, but somehow aren't.
 	//atomicAdd(out_buf.collision_count, 1);
