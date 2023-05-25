@@ -83,6 +83,13 @@ struct __attribute__((packed, aligned(16))) Scene {
         struct Object objects[MAX_OBJECTS];
 };
 
+// When the `compute.glsl` calculates the impulse for a collision, intermediate values get stored
+// here so I can see what's going on (or going wrong...)
+struct __attribute__((packed)) CollisionDebug {
+	vec4 pos; // vec3
+	vec4 normal; // vec3
+};
+
 struct __attribute__((packed, aligned(16))) ComputeOut {
         vec4 force; // vec3
 
@@ -93,12 +100,12 @@ struct __attribute__((packed, aligned(16))) ComputeOut {
         vec4 linear_impulse; // vec3
 
         // Instantaneous change in angular velocity
-        vec4 angular_impulse; // vec3
+        vec3 angular_impulse;
 
-        // Debug stuff
-        vec3 collision_pos;
+	// Total collisions - we only compute impulse for one
         uint32_t collision_count;
-        vec4 collision_normal; // vec3
+
+	struct CollisionDebug debug;
 };
 
 // I need to be able to see what's going on when my compute shader inevitably breaks. This is what
@@ -138,8 +145,6 @@ struct SyncSet {
         VkSemaphore render_sem;
 };
 
-// Maybe the debug stuff should go in its own struct? All they share is the input buffer and set
-// layout. Ah, whatever.
 struct PhysicsEngine {
         VkCommandBuffer cbufs[CONCURRENT_FRAMES];
         VkPipelineLayout pipe_layout;
@@ -1148,12 +1153,12 @@ int main() {
                         if (collision_count > 0) {
                                 printf("%d collisions\n", collision_count);
                                 printf("Collided at: %5.2f %5.2f %5.2f\n",
-                                       compute_out.collision_pos[0], compute_out.collision_pos[1],
-                                       compute_out.collision_pos[2]);
+                                       compute_out.debug.pos[0], compute_out.debug.pos[1],
+                                       compute_out.debug.pos[2]);
                                 printf("with normal %5.2f %5.2f %5.2f\n",
-                                       compute_out.collision_normal[0],
-                                       compute_out.collision_normal[1],
-                                       compute_out.collision_normal[2]);
+                                       compute_out.debug.normal[0],
+                                       compute_out.debug.normal[1],
+                                       compute_out.debug.normal[2]);
                                 scene_data->objects[0].linear_vel[0] +=
                                         compute_out.linear_impulse[0] / 1;
                                 scene_data->objects[0].linear_vel[1] +=

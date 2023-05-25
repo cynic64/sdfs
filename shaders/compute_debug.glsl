@@ -43,6 +43,4 @@ void main() {
 	out_buf.b_linear_vel = b.linear_vel;
 	out_buf.a_angular_vel = a.angular_vel;
 	out_buf.b_angular_vel = b.angular_vel;
-
-	// Object's corners
 }
